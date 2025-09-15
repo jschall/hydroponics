@@ -15,13 +15,20 @@ TEMP_Q10 = 2.0  # Q10 temperature factor for uptake scaling
 RISK_LAMBDA = 1.0  # weight on variance in expected loss
 
 # Tap water background minerals (South Florida / Pembroke Pines)
-# Updated based on local water quality data
-TAP_CA_MG_L = 80.0   # Calcium in tap water (mg/L) - higher due to limestone geology
-TAP_MG_MG_L = 20.0   # Magnesium in tap water (mg/L) - moderate hardness
-TAP_NA_MG_L = 25.0   # Sodium in tap water (mg/L)
-TAP_K_MG_L = 1.0     # Potassium in tap water (mg/L) - very low
-TAP_ALK_MG_L = 140.0 # Alkalinity in tap water (mg/L CaCO3) - moderate to high
-TAP_PH = 7.8         # pH of tap water - slightly alkaline from limestone buffering
+# TAP_CA_MG_L = 80.0   # Calcium in tap water (mg/L) - higher due to limestone geology
+# TAP_MG_MG_L = 20.0   # Magnesium in tap water (mg/L) - moderate hardness
+# TAP_NA_MG_L = 25.0   # Sodium in tap water (mg/L)
+# TAP_K_MG_L = 1.0     # Potassium in tap water (mg/L) - very low
+# TAP_ALK_MG_L = 140.0 # Alkalinity in tap water (mg/L CaCO3) - moderate to high
+# TAP_PH = 7.8         # pH of tap water - slightly alkaline from limestone buffering
+
+# RO water baseline (post-RO, low mineral)
+TAP_CA_MG_L = 0.0    # Calcium in RO water (mg/L)
+TAP_MG_MG_L = 0.0    # Magnesium in RO water (mg/L)
+TAP_NA_MG_L = 1.0    # Sodium in RO water (mg/L)
+TAP_K_MG_L = 0.0     # Potassium in RO water (mg/L)
+TAP_ALK_MG_L = 10.0  # Alkalinity in RO water (mg/L CaCO3)
+TAP_PH = 6.0         # pH reference for RO (weakly buffered; align with plant target)
 
 # Phenology: germination lag and ramp for growth-stage-controlled uptake
 STAGE_S_MIN = 0.02  # logistic lower asymptote
@@ -61,6 +68,82 @@ FE_REFILL_DECAY_RATE = 0.002  # per-day decay in prepared refill mix (low light 
 EVAP_COEFF_MM_PER_KPA = 0.5  # Tuned for completely covered reservoir (very low evap)
 CI_Z = 1.96  # 95% CI multiplier for Gaussian
 
+# Generalized chemical system
+# Each chemical contributes elemental ppm per ml/L of concentrate added, and may change alkalinity (mg/L CaCO3) per ml/L (negative for acids)
+# Users can edit this list to match their available products (3-part, 6-part, etc.)
+# CHEMICALS = [
+#     { 'name': 'Part A', 'per_ml_ppm': {'N': 60.0, 'P': 0.0, 'K': 41.5, 'Ca': 50.0, 'Mg': 0.0, 'Fe': 1.2}, 'alk_change_mg_per_ml': 0.0, 'ml_bounds': (0.0, 10.0) },
+#     { 'name': 'Part B', 'per_ml_ppm': {'N': 10.0, 'P': 21.8, 'K': 49.8, 'Ca': 0.0, 'Mg': 12.0, 'Fe': 0.0}, 'alk_change_mg_per_ml': 0.0, 'ml_bounds': (0.0, 10.0) },
+# ]
+
+# Green Planet GP3 system (ppm per ml/L). Conversions: P2O5->P factor 0.436, K2O->K factor 0.83; elemental % uses factor 10 ppm per 1%.
+CHEMICALS = [
+    {
+        'name': 'GP3 Grow',
+        'per_ml_ppm': {
+            'N': 20.0,
+            'P': 1.0 * 0.436 * 10.0,   # 1% P2O5
+            'K': 6.0 * 0.83 * 10.0,   # 6% K2O
+            'Ca': 0.0,
+            'Mg': 5.0,
+            'Fe': 0.0,
+        },
+        'alk_change_mg_per_ml': 0.0,
+        'ml_bounds': (0.0, 10.0),
+    },
+    {
+        'name': 'GP3 Bloom',
+        'per_ml_ppm': {
+            'N': 0.0,
+            'P': 5.0 * 0.436 * 10.0,   # 5% P2O5
+            'K': 4.0 * 0.83 * 10.0,    # 4% K2O
+            'Ca': 0.0,
+            'Mg': 15.0,
+            'Fe': 0.0,
+        },
+        'alk_change_mg_per_ml': 0.0,
+        'ml_bounds': (0.0, 10.0),
+    },
+    {
+        'name': 'GP3 Micro',
+        'per_ml_ppm': {
+            'N': 50.0,                  # 5% N
+            'P': 0.0,
+            'K': 1.0 * 0.83 * 10.0,    # 1% K2O
+            'Ca': 60.0,                 # 6% Ca
+            'Mg': 0.0,
+            'Fe': 1.0,                  # 0.1% Fe chelated
+        },
+        'alk_change_mg_per_ml': 0.0,
+        'ml_bounds': (0.0, 10.0),
+    },
+    # Optional nitric acid (edit to your stock concentration or remove if not used)
+    {
+        'name': 'Nitric Acid',
+        'per_ml_ppm': {'N': 150.0},
+        'alk_change_mg_per_ml': -400.0,
+        'ml_bounds': (0.0, 5.0),
+    },
+]
+
+def chem_nutrient_ppm_from_ml(mls):
+    n = p = k = ca = mg = fe = 0.0
+    for m, chem in zip(mls, CHEMICALS):
+        comp = chem.get('per_ml_ppm', {})
+        n += comp.get('N', 0.0) * m
+        p += comp.get('P', 0.0) * m
+        k += comp.get('K', 0.0) * m
+        ca += comp.get('Ca', 0.0) * m
+        mg += comp.get('Mg', 0.0) * m
+        fe += comp.get('Fe', 0.0) * m
+    return n, p, k, ca, mg, fe
+
+def chem_alk_change_from_ml(mls):
+    delta = 0.0
+    for m, chem in zip(mls, CHEMICALS):
+        delta += chem.get('alk_change_mg_per_ml', 0.0) * m
+    return delta
+
 # Three-phase stoichiometric schedule (day-based)
 PHASE_GERM_END = 14
 PHASE_VEG_END = 55
@@ -81,18 +164,19 @@ PHASE_RATIOS = {
 TGT_REL = {'N': 0.2, 'P': 0.25, 'K': 0.2, 'Ca': 0.2, 'Mg': 0.2, 'Fe': 0.5}
 TGT_ABS = {'N': 4.0,  'P': 1.5,  'K': 8.0, 'Ca': 4.0,  'Mg': 1.5,  'Fe': 0.15}
 TOX_MAX = {'N': 300.0, 'P': 100.0, 'K': 300.0, 'Ca': 190.0, 'Mg': 70.0, 'Fe': 5.0}
-N_A = 60.0  # ppm N per ml/L, Part A (6% N)
-N_B = 10.0  # ppm N per ml/L, Part B (1% N)
-P_A = 0.0  # ppm P per ml/L, Part A
-P_B = 21.8  # ppm P per ml/L, Part B (5% P2O5 * 0.436)
-K_A = 41.5  # ppm K per ml/L, Part A (5% K2O * 0.83)
-K_B = 49.8  # ppm K per ml/L, Part B (6% K2O * 0.83)
-CA_A = 50.0  # ppm Ca per ml/L, Part A (5% Ca)
-CA_B = 0.0   # ppm Ca per ml/L, Part B
-MG_A = 0.0   # ppm Mg per ml/L, Part A
-MG_B = 12.0  # ppm Mg per ml/L, Part B (1.2% Mg)
-FE_A = 1.2   # ppm Fe per ml/L, Part A (0.12% Fe chelated)
-FE_B = 0.0   # ppm Fe per ml/L, Part B
+# Back-compat placeholders (not used by generalized flow but kept to avoid refactoring print math elsewhere).
+N_A = CHEMICALS[0]['per_ml_ppm'].get('N', 0.0)
+N_B = CHEMICALS[1]['per_ml_ppm'].get('N', 0.0)
+P_A = CHEMICALS[0]['per_ml_ppm'].get('P', 0.0)
+P_B = CHEMICALS[1]['per_ml_ppm'].get('P', 0.0)
+K_A = CHEMICALS[0]['per_ml_ppm'].get('K', 0.0)
+K_B = CHEMICALS[1]['per_ml_ppm'].get('K', 0.0)
+CA_A = CHEMICALS[0]['per_ml_ppm'].get('Ca', 0.0)
+CA_B = CHEMICALS[1]['per_ml_ppm'].get('Ca', 0.0)
+MG_A = CHEMICALS[0]['per_ml_ppm'].get('Mg', 0.0)
+MG_B = CHEMICALS[1]['per_ml_ppm'].get('Mg', 0.0)
+FE_A = CHEMICALS[0]['per_ml_ppm'].get('Fe', 0.0)
+FE_B = CHEMICALS[1]['per_ml_ppm'].get('Fe', 0.0)
 SIM_DAYS = 90  # Per project goal of 90-day unattended grow
 N_TO_BIOMASS = 0.02  # g biomass per mg N uptake (approx., peppers ~2-3% N by dry weight)
 N_TO_BIOMASS_STD = 0.005  # Increased variance for biomass conversion uncertainty
@@ -281,7 +365,8 @@ def build_physio_targets(days, daily_w_mean, cum_mass_mean):
     return tgt_n, tgt_p, tgt_k, tgt_ca, tgt_mg, tgt_fe
 
 # Simulation function: evolve concentrations with concentration-dependent uptake and param variance
-def simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=SIM_DAYS, sample_params=None, light_dli=LIGHT_DLI, air_temp_f=AIR_TEMPERATURE, humidity=HUMIDITY):
+def simulate(ml_init_list, ml_refill_list, days=SIM_DAYS, sample_params=None, light_dli=LIGHT_DLI, air_temp_f=AIR_TEMPERATURE, humidity=HUMIDITY,
+             alk_init_pretreat=TAP_ALK_MG_L, alk_refill_pretreat=TAP_ALK_MG_L):
     if sample_params is None:
         sample_params = {}
 
@@ -311,16 +396,22 @@ def simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=SIM_DAYS, samp
     n_uptake_total = np.zeros(days + 1)
 
     # Initial concentrations (ppm) - fertilizer + tap water background minerals
-    n_ppm[0] = N_A * ml_a_init + N_B * ml_b_init  # N only from fertilizer
-    p_ppm[0] = P_A * ml_a_init + P_B * ml_b_init  # P only from fertilizer
-    k_ppm[0] = K_A * ml_a_init + K_B * ml_b_init + TAP_K_MG_L  # K from fertilizer + tap
-    ca_ppm[0] = CA_A * ml_a_init + CA_B * ml_b_init + TAP_CA_MG_L  # Ca from fertilizer + tap
-    mg_ppm[0] = MG_A * ml_a_init + MG_B * ml_b_init + TAP_MG_MG_L  # Mg from fertilizer + tap
-    fe_ppm[0] = FE_A * ml_a_init + FE_B * ml_b_init  # Fe only from fertilizer
+    init_n, init_p, init_k, init_ca, init_mg, init_fe = chem_nutrient_ppm_from_ml(ml_init_list)
+    # Include tap baseline minerals
+    init_k += TAP_K_MG_L
+    init_ca += TAP_CA_MG_L
+    init_mg += TAP_MG_MG_L
+    # Apply alkalinity pre-treatment alkalinity change and any acid-contributed nutrients embedded in CHEMICALS
+    n_ppm[0] = init_n
+    p_ppm[0] = init_p
+    k_ppm[0] = init_k
+    ca_ppm[0] = init_ca
+    mg_ppm[0] = init_mg
+    fe_ppm[0] = init_fe
 
-    # Initial pH and alkalinity from tap water
+    # Initial pH and alkalinity from pre-treated tap water
     ph = np.full(days + 1, TAP_PH)
-    alkalinity = np.full(days + 1, TAP_ALK_MG_L)
+    alkalinity = np.full(days + 1, alk_init_pretreat)
     for d in range(days):
         biomass_g_per_plant = (n_uptake_total[d] * n_to_biomass) / 2.0
         W = daily_water(d, light_dli, air_temp_f, humidity, biomass_g_per_plant)
@@ -339,7 +430,9 @@ def simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=SIM_DAYS, samp
         U_n_actual = min(U_n_mm, n_ppm[d] * RESERVOIR_VOLUME)
         n_uptake_total[d + 1] = n_uptake_total[d] + U_n_actual
         mass_n_after = n_ppm[d] * RESERVOIR_VOLUME - U_n_actual
-        n_mass_new = mass_n_after + (N_A * ml_a_refill + N_B * ml_b_refill) * W
+        # N additions from refill chemicals
+        refill_n, refill_p, refill_k, refill_ca, refill_mg, refill_fe = chem_nutrient_ppm_from_ml(ml_refill_list)
+        n_mass_new = mass_n_after + (refill_n * W)
         n_ppm[d + 1] = max(0, n_mass_new / RESERVOIR_VOLUME)
 
         # Three-phase stoichiometric ratios relative to N uptake
@@ -359,30 +452,30 @@ def simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=SIM_DAYS, samp
         # Actual uptakes capped by MM, demand, and available mass
         U_p_actual = min(U_p_mm, demand_p, p_ppm[d] * RESERVOIR_VOLUME)
         mass_p_after = p_ppm[d] * RESERVOIR_VOLUME - U_p_actual
-        p_mass_new = mass_p_after + (P_A * ml_a_refill + P_B * ml_b_refill) * W
+        p_mass_new = mass_p_after + (refill_p * W)
         p_ppm[d + 1] = max(0, p_mass_new / RESERVOIR_VOLUME)
 
         U_k_actual = min(U_k_mm, demand_k, k_ppm[d] * RESERVOIR_VOLUME)
         mass_k_after = k_ppm[d] * RESERVOIR_VOLUME - U_k_actual
-        k_mass_new = mass_k_after + (K_A * ml_a_refill + K_B * ml_b_refill) * W
+        k_mass_new = mass_k_after + (refill_k * W)
         k_ppm[d + 1] = max(0, k_mass_new / RESERVOIR_VOLUME)
 
         # Ca mass-flow cap based on transpiration delivery (W L/day * ppm mg/L)
         ca_mass_flow_cap = W * ca_ppm[d]
         U_ca_actual = min(U_ca_mm, demand_ca, ca_ppm[d] * RESERVOIR_VOLUME, ca_mass_flow_cap)
         mass_ca_after = ca_ppm[d] * RESERVOIR_VOLUME - U_ca_actual
-        ca_mass_new = mass_ca_after + (CA_A * ml_a_refill + CA_B * ml_b_refill) * W
+        ca_mass_new = mass_ca_after + (refill_ca * W)
         ca_ppm[d + 1] = max(0, ca_mass_new / RESERVOIR_VOLUME)
 
         U_mg_actual = min(U_mg_mm, demand_mg, mg_ppm[d] * RESERVOIR_VOLUME)
         mass_mg_after = mg_ppm[d] * RESERVOIR_VOLUME - U_mg_actual
-        mg_mass_new = mass_mg_after + (MG_A * ml_a_refill + MG_B * ml_b_refill) * W
+        mg_mass_new = mass_mg_after + (refill_mg * W)
         mg_ppm[d + 1] = max(0, mg_mass_new / RESERVOIR_VOLUME)
 
         U_fe_actual = min(U_fe_mm, demand_fe, fe_ppm[d] * RESERVOIR_VOLUME)
         mass_fe_after = fe_ppm[d] * RESERVOIR_VOLUME - U_fe_actual
         # Add Fe from refill with decay in prepared refill over time
-        fe_add_refill = (FE_A * ml_a_refill + FE_B * ml_b_refill) * W * ((1.0 - FE_REFILL_DECAY_RATE) ** d)
+        fe_add_refill = (refill_fe * W) * ((1.0 - FE_REFILL_DECAY_RATE) ** d)
         fe_mass_new = mass_fe_after + fe_add_refill
         # Apply Fe decay after uptake and refill addition
         fe_mass_new *= (1.0 - FE_DECAY_RATE)
@@ -393,8 +486,13 @@ def simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=SIM_DAYS, samp
         anion_uptake = (U_n_actual + U_p_actual)
         net_acid_eq_mg = anion_uptake - cation_uptake  # positive = acidification, negative = alkalinization
         alk_mass_prev = alkalinity[d] * RESERVOIR_VOLUME
-        # Alkalinity changes in response to net ion balance
-        alk_mass_new = alk_mass_prev - K_ALK_CONV * net_acid_eq_mg
+        # Alkalinity changes in response to net ion balance, plus dilution/replacement by refill water
+        # Volume W is replaced by refill water with alkalinity alk_refill_pretreat; remaining volume retains previous alkalinity state
+        refill_alk_mass = alk_refill_pretreat * W
+        remaining_mass = max(0.0, RESERVOIR_VOLUME - W) * alkalinity[d]
+        mixed_alk_mass = refill_alk_mass + remaining_mass
+        # Apply uptake-driven alkalinity change after mixing
+        alk_mass_new = mixed_alk_mass - K_ALK_CONV * net_acid_eq_mg
         alkalinity[d + 1] = max(0.0, alk_mass_new) / max(1e-9, RESERVOIR_VOLUME)
         buffer = 1.0 / (1.0 + ALK_BUFFER_BETA * alkalinity[d])
         ph_delta = buffer * K_PH_DRIFT * ((cation_uptake - anion_uptake) / max(1e-6, RESERVOIR_VOLUME))
@@ -405,7 +503,8 @@ def simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=SIM_DAYS, samp
     return n_ppm, p_ppm, k_ppm, ca_ppm, mg_ppm, fe_ppm, n_uptake_total, cumulative_mass, ph, alkalinity
 
 # Centralized computation of means and variances (±σ propagation of constant climate and uptake parameters)
-def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days, sample_params, light_dli, air_temp_f, humidity):
+def compute_means_and_variances(ml_init_list, ml_refill_list, days, sample_params, light_dli, air_temp_f, humidity,
+                                alk_init_pt=TAP_ALK_MG_L, alk_refill_pt=TAP_ALK_MG_L):
     if sample_params is None:
         sample_params = {}
 
@@ -427,7 +526,8 @@ def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, 
     }
 
     n_mean, p_mean, k_mean, ca_mean, mg_mean, fe_mean, n_uptake_total, cum_mass_mean, ph_mean, alk_mean = simulate(
-        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params, light_dli=light_dli, air_temp_f=air_temp_f, humidity=humidity
+        ml_init_list, ml_refill_list, days=days, sample_params=mean_params, light_dli=light_dli, air_temp_f=air_temp_f, humidity=humidity,
+        alk_init_pretreat=alk_init_pt, alk_refill_pretreat=alk_refill_pt
     )
 
     var_n = np.zeros(days + 1)
@@ -439,8 +539,10 @@ def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, 
 
     def add_var_for_params(params_plus, params_minus, ldli, tempf, rh):
         nonlocal var_n, var_p, var_k, var_ca, var_mg, var_fe
-        n_p, p_p, k_p, ca_p, mg_p, fe_p, _, _, _, _ = simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=params_plus, light_dli=ldli, air_temp_f=tempf, humidity=rh)
-        n_m, p_m, k_m_, ca_m, mg_m, fe_m, _, _, _, _ = simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=params_minus, light_dli=ldli, air_temp_f=tempf, humidity=rh)
+        n_p, p_p, k_p, ca_p, mg_p, fe_p, _, _, _, _ = simulate(ml_init_list, ml_refill_list, days=days, sample_params=params_plus, light_dli=ldli, air_temp_f=tempf, humidity=rh,
+                                                                alk_init_pretreat=alk_init_pt, alk_refill_pretreat=alk_refill_pt)
+        n_m, p_m, k_m_, ca_m, mg_m, fe_m, _, _, _, _ = simulate(ml_init_list, ml_refill_list, days=days, sample_params=params_minus, light_dli=ldli, air_temp_f=tempf, humidity=rh,
+                                                                 alk_init_pretreat=alk_init_pt, alk_refill_pretreat=alk_refill_pt)
         var_n += ((n_p - n_m) / 2.0) ** 2
         var_p += ((p_p - p_m) / 2.0) ** 2
         var_k += ((k_p - k_m_) / 2.0) ** 2
@@ -481,12 +583,14 @@ def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, 
     sig_rh = HUMIDITY_STD
     # DLI sensitivities
     n_dli_p, p_dli_p, k_dli_p, ca_dli_p, mg_dli_p, fe_dli_p, _, _, _, _ = simulate(
-        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params,
-        light_dli=light_dli + sig_dli, air_temp_f=air_temp_f, humidity=humidity
+        ml_init_list, ml_refill_list, days=days, sample_params=mean_params,
+        light_dli=light_dli + sig_dli, air_temp_f=air_temp_f, humidity=humidity,
+        alk_init_pretreat=alk_init_pt, alk_refill_pretreat=alk_refill_pt
     )
     n_dli_m, p_dli_m, k_dli_m, ca_dli_m, mg_dli_m, fe_dli_m, _, _, _, _ = simulate(
-        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params,
-        light_dli=max(0.0, light_dli - sig_dli), air_temp_f=air_temp_f, humidity=humidity
+        ml_init_list, ml_refill_list, days=days, sample_params=mean_params,
+        light_dli=max(0.0, light_dli - sig_dli), air_temp_f=air_temp_f, humidity=humidity,
+        alk_init_pretreat=alk_init_pt, alk_refill_pretreat=alk_refill_pt
     )
     s_n_dli = (n_dli_p - n_dli_m) / (2.0 * max(1e-9, sig_dli))
     s_p_dli = (p_dli_p - p_dli_m) / (2.0 * max(1e-9, sig_dli))
@@ -497,12 +601,14 @@ def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, 
 
     # Temperature sensitivities
     n_t_p, p_t_p, k_t_p, ca_t_p, mg_t_p, fe_t_p, _, _, _, _ = simulate(
-        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params,
-        light_dli=light_dli, air_temp_f=air_temp_f + sig_t, humidity=humidity
+        ml_init_list, ml_refill_list, days=days, sample_params=mean_params,
+        light_dli=light_dli, air_temp_f=air_temp_f + sig_t, humidity=humidity,
+        alk_init_pretreat=alk_init_pt, alk_refill_pretreat=alk_refill_pt
     )
     n_t_m, p_t_m, k_t_m, ca_t_m, mg_t_m, fe_t_m, _, _, _, _ = simulate(
-        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params,
-        light_dli=light_dli, air_temp_f=air_temp_f - sig_t, humidity=humidity
+        ml_init_list, ml_refill_list, days=days, sample_params=mean_params,
+        light_dli=light_dli, air_temp_f=air_temp_f - sig_t, humidity=humidity,
+        alk_init_pretreat=alk_init_pt, alk_refill_pretreat=alk_refill_pt
     )
     s_n_t = (n_t_p - n_t_m) / (2.0 * max(1e-9, sig_t))
     s_p_t = (p_t_p - p_t_m) / (2.0 * max(1e-9, sig_t))
@@ -513,12 +619,14 @@ def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, 
 
     # Humidity sensitivities
     n_rh_p, p_rh_p, k_rh_p, ca_rh_p, mg_rh_p, fe_rh_p, _, _, _, _ = simulate(
-        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params,
-        light_dli=light_dli, air_temp_f=air_temp_f, humidity=min(0.99, humidity + sig_rh)
+        ml_init_list, ml_refill_list, days=days, sample_params=mean_params,
+        light_dli=light_dli, air_temp_f=air_temp_f, humidity=min(0.99, humidity + sig_rh),
+        alk_init_pretreat=alk_init_pt, alk_refill_pretreat=alk_refill_pt
     )
     n_rh_m, p_rh_m, k_rh_m, ca_rh_m, mg_rh_m, fe_rh_m, _, _, _, _ = simulate(
-        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params,
-        light_dli=light_dli, air_temp_f=air_temp_f, humidity=max(0.0, humidity - sig_rh)
+        ml_init_list, ml_refill_list, days=days, sample_params=mean_params,
+        light_dli=light_dli, air_temp_f=air_temp_f, humidity=max(0.0, humidity - sig_rh),
+        alk_init_pretreat=alk_init_pt, alk_refill_pretreat=alk_refill_pt
     )
     s_n_rh = (n_rh_p - n_rh_m) / (2.0 * max(1e-9, sig_rh))
     s_p_rh = (p_rh_p - p_rh_m) / (2.0 * max(1e-9, sig_rh))
@@ -598,14 +706,25 @@ def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, 
     }
 
 # Joint optimization bounds for [ml_a_init, ml_b_init, ml_a_refill, ml_b_refill]
-bounds = [(0, 10), (0, 10), (0, 10), (0, 10)]
+def build_bounds():
+    chem_bounds = []
+    for chem in CHEMICALS:
+        lo, hi = chem.get('ml_bounds', (0.0, 10.0))
+        chem_bounds.append((lo, hi))
+    # bounds for refill chems mirror initial
+    # Alkalinity residual bounds adapt to source water; allow reduction down to 0 and up to at least 10 mg/L
+    alk_hi = max(10.0, TAP_ALK_MG_L)
+    all_bounds = chem_bounds + chem_bounds + [(0.0, alk_hi), (0.0, alk_hi)]
+    return all_bounds
 
 # Objective for refill: probabilistic health with analytical uncertainty
 def objective_refill(x, sim_days=SIM_DAYS, light_dli=LIGHT_DLI, air_temp_f=AIR_TEMPERATURE, humidity=HUMIDITY):
-    if len(x) == 2:
-        ml_a_init, ml_b_init = 1.0, 1.0  # use default initial concentrations if only refill provided
-    else:
-        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill = x
+    num_chems = len(CHEMICALS)
+    # x layout: [init_ml_0..init_ml_{n-1}, refill_ml_0..refill_ml_{n-1}, alk_init_pt, alk_refill_pt]
+    init_ml = list(x[:num_chems])
+    refill_ml = list(x[num_chems:2*num_chems])
+    alk_init_pt = x[-2]
+    alk_refill_pt = x[-1]
     # Use centralized means/variances (also needed for physio-aware targets)
     mean_params = {
         'n_v_max': N_V_MAX, 'p_v_max': P_V_MAX, 'k_v_max': K_V_MAX,
@@ -614,7 +733,8 @@ def objective_refill(x, sim_days=SIM_DAYS, light_dli=LIGHT_DLI, air_temp_f=AIR_T
         'ca_k_m': CA_K_M, 'mg_k_m': MG_K_M, 'fe_k_m': FE_K_M,
         'n_to_biomass': N_TO_BIOMASS,
     }
-    results = compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, sim_days, mean_params, light_dli, air_temp_f, humidity)
+    results = compute_means_and_variances(init_ml, refill_ml, sim_days, mean_params, light_dli, air_temp_f, humidity,
+                                          alk_init_pt=alk_init_pt, alk_refill_pt=alk_refill_pt)
     n_sim = results['mean']['N']; p_sim = results['mean']['P']; k_sim = results['mean']['K']
     ca_sim = results['mean']['Ca']; mg_sim = results['mean']['Mg']; fe_sim = results['mean']['Fe']
     var_n = results['var']['N']; var_p = results['var']['P']; var_k = results['var']['K']
@@ -652,13 +772,15 @@ def objective_refill(x, sim_days=SIM_DAYS, light_dli=LIGHT_DLI, air_temp_f=AIR_T
     # pH Gaussian penalty
     ph = results['ph_mean']
     ph_var = PH_STD ** 2
-    loss_ph = np.mean(((ph - TAP_PH) ** 2) / (ph_var + 1e-9) + np.log(ph_var + 1e-9))
+    # Center pH penalty on plant-optimal PH_BASE (e.g., 6.0)
+    loss_ph = np.mean(((ph - PH_BASE) ** 2) / (ph_var + 1e-9) + np.log(ph_var + 1e-9))
 
     # EC soft guard: estimate EC from major ions (heuristic)
     # Assume TDS ppm ~ 2.0 * (N+P+K+Ca+Mg) to include counter-ions; EC (mS/cm) ~ TDS/640
     tds_ppm = 2.0 * (n_sim + p_sim + k_sim + ca_sim + mg_sim)
     ec_ms = tds_ppm / 640.0
-    ec_low, ec_high = 1.2, 2.5
+    # Widen acceptable EC band slightly to avoid over-penalizing dosing under hard tap water
+    ec_low, ec_high = 1.0, 2.7
     under = np.maximum(0.0, ec_low - ec_ms)
     over = np.maximum(0.0, ec_ms - ec_high)
     ec_penalty = np.mean(under**2 + over**2)
@@ -674,7 +796,23 @@ def objective_refill(x, sim_days=SIM_DAYS, light_dli=LIGHT_DLI, air_temp_f=AIR_T
     tox_fe = np.mean(np.maximum(0.0, fe_sim - TOX_MAX['Fe'])**2)
     LAMBDA_TOX = 0.01
 
-    return (loss_n + loss_p + loss_k + loss_ca + loss_mg + loss_fe + loss_ph
+    # Mild regularization preferring some alkalinity reduction (to enable more Part A) but avoiding over-acidification
+    alk_series = results['alk_mean']
+    LAMBDA_ALK = 1e-4
+    alk_reg = LAMBDA_ALK * np.mean((np.maximum(0.0, TAP_ALK_MG_L - alk_series))**2)
+
+    # Asymmetric shortfall penalty to avoid degenerate zero-dosing solutions
+    def rel_shortfall(sim, tgt):
+        return np.mean((np.maximum(0.0, tgt - sim) / (tgt + 1e-9))**2)
+    LAMBDA_SHORT = 10.0
+    short_pen = LAMBDA_SHORT * (
+        4.0 * rel_shortfall(n_sim, target_n) +
+        1.5 * rel_shortfall(p_sim, target_p) +
+        3.0 * rel_shortfall(k_sim, target_k) +
+        2.5 * rel_shortfall(ca_sim, target_ca)
+    )
+
+    return (loss_n + loss_p + loss_k + loss_ca + loss_mg + loss_fe + loss_ph + alk_reg + short_pen
             + LAMBDA_EC * ec_penalty
             + LAMBDA_TOX * (tox_n + tox_p + tox_k + tox_ca + tox_mg + tox_fe))
 
@@ -697,32 +835,46 @@ def main():
     RISK_LAMBDA = args.risk_lambda
 
     # Jointly optimize [ml_a_init, ml_b_init, ml_a_refill, ml_b_refill]
-    result = minimize(lambda x: objective_refill(x, SIM_DAYS, light_dli, air_temp, rh), [1.0,1.0,1.0,1.0], bounds=bounds, method='SLSQP')
-    ml_a_init, ml_b_init, optimal_ml_a_refill, optimal_ml_b_refill = result.x
-    optimal_n_refill = N_A * optimal_ml_a_refill + N_B * optimal_ml_b_refill
-    optimal_p_refill = P_B * optimal_ml_b_refill
-    optimal_k_refill = K_A * optimal_ml_a_refill + K_B * optimal_ml_b_refill
-    optimal_ca_refill = CA_A * optimal_ml_a_refill + CA_B * optimal_ml_b_refill
-    optimal_mg_refill = MG_A * optimal_ml_a_refill + MG_B * optimal_ml_b_refill
-    optimal_fe_refill = FE_A * optimal_ml_a_refill + FE_B * optimal_ml_b_refill
+    num_chems = len(CHEMICALS)
+    # initial guess: 1 ml/L for each chem in init and refill, alkalinity ~60% of tap
+    x0 = [1.0] * (num_chems * 2) + [max(40.0, TAP_ALK_MG_L * 0.6), max(40.0, TAP_ALK_MG_L * 0.6)]
+    result = minimize(lambda x: objective_refill(x, SIM_DAYS, light_dli, air_temp, rh), x0, bounds=build_bounds(), method='SLSQP')
+    vec = result.x
+    init_ml = list(vec[:num_chems])
+    refill_ml = list(vec[num_chems:2*num_chems])
+    alk_init_pt, alk_refill_pt = vec[-2], vec[-1]
+    optimal_n_refill, optimal_p_refill, optimal_k_refill, optimal_ca_refill, optimal_mg_refill, optimal_fe_refill = chem_nutrient_ppm_from_ml(refill_ml)
 
-# Scale to 4L for initial
-    ml_a_init_4l = ml_a_init * RESERVOIR_VOLUME
-    ml_b_init_4l = ml_b_init * RESERVOIR_VOLUME
+    # Scale to 4L for initial
+    init_ml_4l = [m * RESERVOIR_VOLUME for m in init_ml]
 
-    print("\nOptimization Results (for ENVY Parts A (6-0-5) and B (1-5-6)):")
-    print(f"Initial in 4L reservoir (higher A:B for seedlings): {ml_a_init_4l:.2f} ml Part A, {ml_b_init_4l:.2f} ml Part B")
-    print(f"  Ratio A:B = {ml_a_init:.2f}:{ml_b_init:.2f}")
-    print(f"  Achieves approx. N {N_A * ml_a_init + N_B * ml_b_init:.1f} ppm, P {P_B * ml_b_init:.1f} ppm")
-    print(f"  K {K_A * ml_a_init + K_B * ml_b_init + TAP_K_MG_L:.1f} ppm (fert: {K_A * ml_a_init + K_B * ml_b_init:.1f} + tap: {TAP_K_MG_L:.1f})")
-    print(f"  Ca {CA_A * ml_a_init + CA_B * ml_b_init + TAP_CA_MG_L:.1f} ppm (fert: {CA_A * ml_a_init + CA_B * ml_b_init:.1f} + tap: {TAP_CA_MG_L:.1f})")
-    print(f"  Mg {MG_A * ml_a_init + MG_B * ml_b_init + TAP_MG_MG_L:.1f} ppm (fert: {MG_A * ml_a_init + MG_B * ml_b_init:.1f} + tap: {TAP_MG_MG_L:.1f})")
-    print(f"  Fe {FE_A * ml_a_init + FE_B * ml_b_init:.1f} ppm")
-    print(f"Optimal for refill reservoir (balanced for full cycle): {optimal_ml_a_refill:.2f} ml Part A and {optimal_ml_b_refill:.2f} ml Part B per liter")
-    print(f"  Ratio A:B = {optimal_ml_a_refill:.2f}:{optimal_ml_b_refill:.2f}")
+    print("\nOptimization Results (generalized chemical system):")
+    for name, ml in zip([c['name'] for c in CHEMICALS], init_ml_4l):
+        print(f"  Initial in 4L: {ml:.2f} ml {name}")
+    init_n, init_p, init_k, init_ca, init_mg, init_fe = chem_nutrient_ppm_from_ml(init_ml)
+    print(f"  Achieves approx. N {init_n:.1f} ppm, P {init_p:.1f} ppm")
+    print(f"  K {init_k + TAP_K_MG_L:.1f} ppm (includes tap {TAP_K_MG_L:.1f})")
+    print(f"  Ca {init_ca + TAP_CA_MG_L:.1f} ppm (includes tap {TAP_CA_MG_L:.1f})")
+    print(f"  Mg {init_mg + TAP_MG_MG_L:.1f} ppm (includes tap {TAP_MG_MG_L:.1f})")
+    print(f"  Fe {init_fe:.1f} ppm")
+    print("Optimal per-liter refill:")
+    for name, ml in zip([c['name'] for c in CHEMICALS], refill_ml):
+        print(f"  {name}: {ml:.2f} ml/L")
     print(f"  Provides N {optimal_n_refill:.1f} ppm, P {optimal_p_refill:.1f} ppm, K {optimal_k_refill:.1f} ppm")
     print(f"  Ca {optimal_ca_refill:.1f} ppm, Mg {optimal_mg_refill:.1f} ppm, Fe {optimal_fe_refill:.1f} ppm")
     print(f"  - This constant mix maintains concentrations close to targets over {SIM_DAYS} days.")
+    # Acid pre-treatment summary
+    acid_init_removed = max(0.0, TAP_ALK_MG_L - alk_init_pt)
+    acid_refill_removed = max(0.0, TAP_ALK_MG_L - alk_refill_pt)
+    # Estimate N from acid based on declared nitric acid chemical in CHEMICALS
+    nitric_index = next((i for i,c in enumerate(CHEMICALS) if 'nitric' in c['name'].lower()), None)
+    acid_n_ppm_per_ml = CHEMICALS[nitric_index]['per_ml_ppm'].get('N', 0.0) if nitric_index is not None else 0.0
+    acid_alk_per_ml = abs(CHEMICALS[nitric_index].get('alk_change_mg_per_ml', 0.0)) if nitric_index is not None else 1.0
+    n_per_mg_caco3 = (acid_n_ppm_per_ml / acid_alk_per_ml) if acid_alk_per_ml > 0 else 0.0
+    n_from_acid_init = acid_init_removed * n_per_mg_caco3
+    n_from_acid_refill = acid_refill_removed * n_per_mg_caco3
+    print(f"Acid pre-treatment: initial alkalinity {TAP_ALK_MG_L:.1f} -> {alk_init_pt:.1f} mg/L (adds ~{n_from_acid_init:.1f} ppm N equivalent)")
+    print(f"Refill water alkalinity {TAP_ALK_MG_L:.1f} -> {alk_refill_pt:.1f} mg/L (adds ~{n_from_acid_refill:.1f} ppm N per liter of refill)")
     print(f"Note: Estimates for Thai peppers at 85F, 70% RH; uptake depends on concentration. Monitor EC (1.5-2.5 mS/cm), pH ({TAP_PH-0.4:.1f}-{TAP_PH+0.4:.1f}).")
     print(f"Tap water background: Ca {TAP_CA_MG_L} mg/L, Mg {TAP_MG_MG_L} mg/L, K {TAP_K_MG_L} mg/L, pH {TAP_PH}, Alk {TAP_ALK_MG_L} mg/L CaCO3.")
 
@@ -734,7 +886,8 @@ def main():
         'ca_k_m': CA_K_M, 'mg_k_m': MG_K_M, 'fe_k_m': FE_K_M,
         'n_to_biomass': N_TO_BIOMASS,
     }
-    results = compute_means_and_variances(ml_a_init, ml_b_init, optimal_ml_a_refill, optimal_ml_b_refill, SIM_DAYS, mean_params, light_dli, air_temp, rh)
+    results = compute_means_and_variances(init_ml, refill_ml, SIM_DAYS, mean_params, light_dli, air_temp, rh,
+                                          alk_init_pt=alk_init_pt, alk_refill_pt=alk_refill_pt)
     n_mean = results['mean']['N']; p_mean = results['mean']['P']; k_mean = results['mean']['K']
     ca_mean = results['mean']['Ca']; mg_mean = results['mean']['Mg']; fe_mean = results['mean']['Fe']
     n_var_s = results['var']['N']; p_var_s = results['var']['P']; k_var_s = results['var']['K']
