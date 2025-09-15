@@ -14,6 +14,15 @@ AIR_TEMPERATURE_STD = 6.0  # Increased for daily/seasonal swings
 TEMP_Q10 = 2.0  # Q10 temperature factor for uptake scaling
 RISK_LAMBDA = 1.0  # weight on variance in expected loss
 
+# Tap water background minerals (South Florida / Pembroke Pines)
+# Updated based on local water quality data
+TAP_CA_MG_L = 80.0   # Calcium in tap water (mg/L) - higher due to limestone geology
+TAP_MG_MG_L = 20.0   # Magnesium in tap water (mg/L) - moderate hardness
+TAP_NA_MG_L = 25.0   # Sodium in tap water (mg/L)
+TAP_K_MG_L = 1.0     # Potassium in tap water (mg/L) - very low
+TAP_ALK_MG_L = 140.0 # Alkalinity in tap water (mg/L CaCO3) - moderate to high
+TAP_PH = 7.8         # pH of tap water - slightly alkaline from limestone buffering
+
 # Phenology: germination lag and ramp for growth-stage-controlled uptake
 STAGE_S_MIN = 0.02  # logistic lower asymptote
 STAGE_D50 = 45.0  # Adjusted for faster Thai chili maturation
@@ -43,7 +52,7 @@ K_PH_DRIFT = 0.0002
 K_PH_RECOVER = 0.02
 PH_STD = 0.2
 ALK_INIT_MG_L = 50.0
-K_ALK_CONV = 0.01  # mg CaCO3 per mg acid-equivalent consumed
+K_ALK_CONV = 0.5  # mg CaCO3 per mg acid-equivalent consumed (increased for visibility)
 ALK_BUFFER_BETA = 0.01  # pH drift damping per mg/L alkalinity
 CORR_T_RH = -0.5
 CORR_T_DLI = 0.2
@@ -177,32 +186,32 @@ def humidity_scale_from_climate(temp_f, rh_frac, alpha=0.6):
     return float(np.clip((vpd_kpa(temp_f, rh_frac) / max(1e-6, vpd_kpa(AIR_TEMPERATURE, HUMIDITY))) ** alpha, 0.2, 1.8))
 
 # Concentration-dependent uptake function (mg/day/2 plants)
-def uptake(c, d, v_max, k_m, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY):
+def uptake(c, d, v_max, k_m, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY, ec_factor=1.0):
     q10_factor = TEMP_Q10 ** ((temp_f - 77.0) / 18.0)
     stage_factor = logistic_stage(d)
     light_factor = light_saturation(dli)
     vpd_factor = max(0.3, vpd_kpa(temp_f, rh_frac)) ** 0.2  # mild modulation on uptake
-    v_max_adj = v_max * stage_factor * light_factor * q10_factor * vpd_factor
+    v_max_adj = v_max * stage_factor * light_factor * q10_factor * vpd_factor * ec_factor
     return v_max_adj * c / (k_m + c)
 
 # Specific uptake functions for each nutrient
-def uptake_n(c, d, v_max=N_V_MAX, k_m=N_K_M, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY):
-    return uptake(c, d, v_max, k_m, total_days, dli, temp_f, rh_frac)
+def uptake_n(c, d, v_max=N_V_MAX, k_m=N_K_M, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY, ec_factor=1.0):
+    return uptake(c, d, v_max, k_m, total_days, dli, temp_f, rh_frac, ec_factor)
 
-def uptake_p(c, d, v_max=P_V_MAX, k_m=P_K_M, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY):
-    return uptake(c, d, v_max, k_m, total_days, dli, temp_f, rh_frac)
+def uptake_p(c, d, v_max=P_V_MAX, k_m=P_K_M, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY, ec_factor=1.0):
+    return uptake(c, d, v_max, k_m, total_days, dli, temp_f, rh_frac, ec_factor)
 
-def uptake_k(c, d, v_max=K_V_MAX, k_m=K_K_M, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY):
-    return uptake(c, d, v_max, k_m, total_days, dli, temp_f, rh_frac)
+def uptake_k(c, d, v_max=K_V_MAX, k_m=K_K_M, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY, ec_factor=1.0):
+    return uptake(c, d, v_max, k_m, total_days, dli, temp_f, rh_frac, ec_factor)
 
-def uptake_ca(c, d, v_max=CA_V_MAX, k_m=CA_K_M, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY):
-    return uptake(c, d, v_max, k_m, total_days, dli, temp_f, rh_frac)
+def uptake_ca(c, d, v_max=CA_V_MAX, k_m=CA_K_M, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY, ec_factor=1.0):
+    return uptake(c, d, v_max, k_m, total_days, dli, temp_f, rh_frac, ec_factor)
 
-def uptake_mg(c, d, v_max=MG_V_MAX, k_m=MG_K_M, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY):
-    return uptake(c, d, v_max, k_m, total_days, dli, temp_f, rh_frac)
+def uptake_mg(c, d, v_max=MG_V_MAX, k_m=MG_K_M, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY, ec_factor=1.0):
+    return uptake(c, d, v_max, k_m, total_days, dli, temp_f, rh_frac, ec_factor)
 
-def uptake_fe(c, d, v_max=FE_V_MAX, k_m=FE_K_M, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY):
-    return uptake(c, d, v_max, k_m, total_days, dli, temp_f, rh_frac)
+def uptake_fe(c, d, v_max=FE_V_MAX, k_m=FE_K_M, total_days=SIM_DAYS, dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY, ec_factor=1.0):
+    return uptake(c, d, v_max, k_m, total_days, dli, temp_f, rh_frac, ec_factor)
 
 # Target concentrations (ppm elemental)
 def target_n_ppm(d):
@@ -301,16 +310,17 @@ def simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=SIM_DAYS, samp
     fe_ppm = np.zeros(days + 1)
     n_uptake_total = np.zeros(days + 1)
 
-    # Initial concentrations (ppm)
-    n_ppm[0] = N_A * ml_a_init + N_B * ml_b_init
-    p_ppm[0] = P_A * ml_a_init + P_B * ml_b_init
-    k_ppm[0] = K_A * ml_a_init + K_B * ml_b_init
-    ca_ppm[0] = CA_A * ml_a_init + CA_B * ml_b_init
-    mg_ppm[0] = MG_A * ml_a_init + MG_B * ml_b_init
-    fe_ppm[0] = FE_A * ml_a_init + FE_B * ml_b_init
+    # Initial concentrations (ppm) - fertilizer + tap water background minerals
+    n_ppm[0] = N_A * ml_a_init + N_B * ml_b_init  # N only from fertilizer
+    p_ppm[0] = P_A * ml_a_init + P_B * ml_b_init  # P only from fertilizer
+    k_ppm[0] = K_A * ml_a_init + K_B * ml_b_init + TAP_K_MG_L  # K from fertilizer + tap
+    ca_ppm[0] = CA_A * ml_a_init + CA_B * ml_b_init + TAP_CA_MG_L  # Ca from fertilizer + tap
+    mg_ppm[0] = MG_A * ml_a_init + MG_B * ml_b_init + TAP_MG_MG_L  # Mg from fertilizer + tap
+    fe_ppm[0] = FE_A * ml_a_init + FE_B * ml_b_init  # Fe only from fertilizer
 
-    ph = np.full(days + 1, PH_BASE)
-    alkalinity = np.full(days + 1, ALK_INIT_MG_L)
+    # Initial pH and alkalinity from tap water
+    ph = np.full(days + 1, TAP_PH)
+    alkalinity = np.full(days + 1, TAP_ALK_MG_L)
     for d in range(days):
         biomass_g_per_plant = (n_uptake_total[d] * n_to_biomass) / 2.0
         W = daily_water(d, light_dli, air_temp_f, humidity, biomass_g_per_plant)
@@ -378,16 +388,17 @@ def simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=SIM_DAYS, samp
         fe_mass_new *= (1.0 - FE_DECAY_RATE)
         fe_ppm[d + 1] = max(0, fe_mass_new / RESERVOIR_VOLUME)
 
-        # Simple pH drift: uptake of cations > anions raises pH; alkalinity buffers drift
+        # Simple pH drift: net ion uptake affects alkalinity bidirectionally
         cation_uptake = (U_k_actual + U_ca_actual + U_mg_actual)
         anion_uptake = (U_n_actual + U_p_actual)
-        acid_eq_mg = max(0.0, (anion_uptake - cation_uptake))  # positive acidifies; consume alkalinity
+        net_acid_eq_mg = anion_uptake - cation_uptake  # positive = acidification, negative = alkalinization
         alk_mass_prev = alkalinity[d] * RESERVOIR_VOLUME
-        alk_mass_new = max(0.0, alk_mass_prev - K_ALK_CONV * acid_eq_mg)
-        alkalinity[d + 1] = alk_mass_new / max(1e-9, RESERVOIR_VOLUME)
+        # Alkalinity changes in response to net ion balance
+        alk_mass_new = alk_mass_prev - K_ALK_CONV * net_acid_eq_mg
+        alkalinity[d + 1] = max(0.0, alk_mass_new) / max(1e-9, RESERVOIR_VOLUME)
         buffer = 1.0 / (1.0 + ALK_BUFFER_BETA * alkalinity[d])
         ph_delta = buffer * K_PH_DRIFT * ((cation_uptake - anion_uptake) / max(1e-6, RESERVOIR_VOLUME))
-        ph[d + 1] = ph[d] + ph_delta - K_PH_RECOVER * (ph[d] - PH_BASE)
+        ph[d + 1] = ph[d] + ph_delta - K_PH_RECOVER * (ph[d] - TAP_PH)
 
     cumulative_mass = n_uptake_total * n_to_biomass / 2  # g dry weight per plant (2 plants)
 
@@ -641,7 +652,7 @@ def objective_refill(x, sim_days=SIM_DAYS, light_dli=LIGHT_DLI, air_temp_f=AIR_T
     # pH Gaussian penalty
     ph = results['ph_mean']
     ph_var = PH_STD ** 2
-    loss_ph = np.mean(((ph - PH_BASE) ** 2) / (ph_var + 1e-9) + np.log(ph_var + 1e-9))
+    loss_ph = np.mean(((ph - TAP_PH) ** 2) / (ph_var + 1e-9) + np.log(ph_var + 1e-9))
 
     # EC soft guard: estimate EC from major ions (heuristic)
     # Assume TDS ppm ~ 2.0 * (N+P+K+Ca+Mg) to include counter-ions; EC (mS/cm) ~ TDS/640
@@ -702,14 +713,18 @@ def main():
     print("\nOptimization Results (for ENVY Parts A (6-0-5) and B (1-5-6)):")
     print(f"Initial in 4L reservoir (higher A:B for seedlings): {ml_a_init_4l:.2f} ml Part A, {ml_b_init_4l:.2f} ml Part B")
     print(f"  Ratio A:B = {ml_a_init:.2f}:{ml_b_init:.2f}")
-    print(f"  Achieves approx. N {N_A * ml_a_init + N_B * ml_b_init:.1f} ppm, P {P_B * ml_b_init:.1f} ppm, K {K_A * ml_a_init + K_B * ml_b_init:.1f} ppm")
-    print(f"  Ca {CA_A * ml_a_init + CA_B * ml_b_init:.1f} ppm, Mg {MG_A * ml_a_init + MG_B * ml_b_init:.1f} ppm, Fe {FE_A * ml_a_init + FE_B * ml_b_init:.1f} ppm")
+    print(f"  Achieves approx. N {N_A * ml_a_init + N_B * ml_b_init:.1f} ppm, P {P_B * ml_b_init:.1f} ppm")
+    print(f"  K {K_A * ml_a_init + K_B * ml_b_init + TAP_K_MG_L:.1f} ppm (fert: {K_A * ml_a_init + K_B * ml_b_init:.1f} + tap: {TAP_K_MG_L:.1f})")
+    print(f"  Ca {CA_A * ml_a_init + CA_B * ml_b_init + TAP_CA_MG_L:.1f} ppm (fert: {CA_A * ml_a_init + CA_B * ml_b_init:.1f} + tap: {TAP_CA_MG_L:.1f})")
+    print(f"  Mg {MG_A * ml_a_init + MG_B * ml_b_init + TAP_MG_MG_L:.1f} ppm (fert: {MG_A * ml_a_init + MG_B * ml_b_init:.1f} + tap: {TAP_MG_MG_L:.1f})")
+    print(f"  Fe {FE_A * ml_a_init + FE_B * ml_b_init:.1f} ppm")
     print(f"Optimal for refill reservoir (balanced for full cycle): {optimal_ml_a_refill:.2f} ml Part A and {optimal_ml_b_refill:.2f} ml Part B per liter")
     print(f"  Ratio A:B = {optimal_ml_a_refill:.2f}:{optimal_ml_b_refill:.2f}")
     print(f"  Provides N {optimal_n_refill:.1f} ppm, P {optimal_p_refill:.1f} ppm, K {optimal_k_refill:.1f} ppm")
     print(f"  Ca {optimal_ca_refill:.1f} ppm, Mg {optimal_mg_refill:.1f} ppm, Fe {optimal_fe_refill:.1f} ppm")
     print(f"  - This constant mix maintains concentrations close to targets over {SIM_DAYS} days.")
-    print("Note: Estimates for Thai peppers at 85F, 70% RH; uptake depends on concentration. Monitor EC (1.5-2.5 mS/cm), pH (5.8-6.2).")
+    print(f"Note: Estimates for Thai peppers at 85F, 70% RH; uptake depends on concentration. Monitor EC (1.5-2.5 mS/cm), pH ({TAP_PH-0.4:.1f}-{TAP_PH+0.4:.1f}).")
+    print(f"Tap water background: Ca {TAP_CA_MG_L} mg/L, Mg {TAP_MG_MG_L} mg/L, K {TAP_K_MG_L} mg/L, pH {TAP_PH}, Alk {TAP_ALK_MG_L} mg/L CaCO3.")
 
     # Centralized means and variances for plotting
     mean_params = {
@@ -782,96 +797,123 @@ def main():
         mg_ci = CI_Z * mg_std
         fe_ci = CI_Z * fe_std
 
-        fig, axs = plt.subplots(7, 1, figsize=(10, 24))
-        axs[0].fill_between(days, target_n - n_band, target_n + n_band, color='orange', alpha=0.15, label='Target 95% CI')
-        axs[0].fill_between(days, target_n, np.minimum(TOX_MAX['N'], target_n), color='none')
-        axs[0].axhline(TOX_MAX['N'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
-        axs[0].plot(days, target_n, label='Target N PPM', linestyle='--', color='gray')
-        axs[0].plot(days, n_mean, label='Mean Simulated N PPM')
-        axs[0].fill_between(days, n_mean - n_ci, n_mean + n_ci, alpha=0.3, label='95% CI (analytic)')
-        axs[0].set_ylabel('N (ppm)')
-        axs[0].legend()
-        axs[0].grid(True, alpha=0.3)
+        fig, axs = plt.subplots(5, 2, figsize=(15, 20))
+        fig.suptitle('Hydroponic Nutrient Simulation Results', fontsize=16, fontweight='bold', y=0.98)
+        axs[0,0].fill_between(days, target_n - n_band, target_n + n_band, color='orange', alpha=0.15, label='Target 95% CI')
+        axs[0,0].fill_between(days, target_n, np.minimum(TOX_MAX['N'], target_n), color='none')
+        axs[0,0].axhline(TOX_MAX['N'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
+        axs[0,0].plot(days, target_n, label='Target N PPM', linestyle='--', color='gray')
+        axs[0,0].plot(days, n_mean, label='Mean Simulated N PPM')
+        axs[0,0].fill_between(days, n_mean - n_ci, n_mean + n_ci, alpha=0.3, label='95% CI (analytic)')
+        axs[0,0].set_ylabel('N (ppm)')
+        axs[0,0].set_title('Nitrogen')
+        axs[0,0].legend()
+        axs[0,0].grid(True, alpha=0.3)
 
-        axs[1].fill_between(days, target_p - p_band, target_p + p_band, color='orange', alpha=0.15, label='Target 95% CI')
-        axs[1].axhline(TOX_MAX['P'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
-        axs[1].plot(days, target_p, label='Target P PPM', linestyle='--', color='gray')
-        axs[1].plot(days, p_mean, label='Mean Simulated P PPM')
-        axs[1].fill_between(days, p_mean - p_ci, p_mean + p_ci, alpha=0.3, label='95% CI (analytic)')
-        axs[1].set_ylabel('P (ppm)')
-        axs[1].legend()
-        axs[1].grid(True, alpha=0.3)
+        axs[0,1].fill_between(days, target_p - p_band, target_p + p_band, color='orange', alpha=0.15, label='Target 95% CI')
+        axs[0,1].axhline(TOX_MAX['P'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
+        axs[0,1].plot(days, target_p, label='Target P PPM', linestyle='--', color='gray')
+        axs[0,1].plot(days, p_mean, label='Mean Simulated P PPM')
+        axs[0,1].fill_between(days, p_mean - p_ci, p_mean + p_ci, alpha=0.3, label='95% CI (analytic)')
+        axs[0,1].set_ylabel('P (ppm)')
+        axs[0,1].set_title('Phosphorus')
+        axs[0,1].legend()
+        axs[0,1].grid(True, alpha=0.3)
 
-        axs[2].fill_between(days, target_k - k_band, target_k + k_band, color='orange', alpha=0.15, label='Target 95% CI')
-        axs[2].axhline(TOX_MAX['K'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
-        axs[2].plot(days, target_k, label='Target K PPM', linestyle='--', color='gray')
-        axs[2].plot(days, k_mean, label='Mean Simulated K PPM')
-        axs[2].fill_between(days, k_mean - k_ci, k_mean + k_ci, alpha=0.3, label='95% CI (analytic)')
-        axs[2].set_ylabel('K (ppm)')
-        axs[2].legend()
-        axs[2].grid(True, alpha=0.3)
+        axs[1,0].fill_between(days, target_k - k_band, target_k + k_band, color='orange', alpha=0.15, label='Target 95% CI')
+        axs[1,0].axhline(TOX_MAX['K'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
+        axs[1,0].plot(days, target_k, label='Target K PPM', linestyle='--', color='gray')
+        axs[1,0].plot(days, k_mean, label='Mean Simulated K PPM')
+        axs[1,0].fill_between(days, k_mean - k_ci, k_mean + k_ci, alpha=0.3, label='95% CI (analytic)')
+        axs[1,0].set_ylabel('K (ppm)')
+        axs[1,0].set_title('Potassium')
+        axs[1,0].legend()
+        axs[1,0].grid(True, alpha=0.3)
 
-        axs[3].fill_between(days, target_ca - ca_band, target_ca + ca_band, color='orange', alpha=0.15, label='Target 95% CI')
-        axs[3].axhline(TOX_MAX['Ca'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
-        axs[3].plot(days, target_ca, label='Target Ca PPM', linestyle='--', color='gray')
-        axs[3].plot(days, ca_mean, label='Mean Simulated Ca PPM')
-        axs[3].fill_between(days, ca_mean - ca_ci, ca_mean + ca_ci, alpha=0.3, label='95% CI (analytic)')
-        axs[3].set_ylabel('Ca (ppm)')
-        axs[3].legend()
-        axs[3].grid(True, alpha=0.3)
+        axs[1,1].fill_between(days, target_ca - ca_band, target_ca + ca_band, color='orange', alpha=0.15, label='Target 95% CI')
+        axs[1,1].axhline(TOX_MAX['Ca'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
+        axs[1,1].plot(days, target_ca, label='Target Ca PPM', linestyle='--', color='gray')
+        axs[1,1].plot(days, ca_mean, label='Mean Simulated Ca PPM')
+        axs[1,1].fill_between(days, ca_mean - ca_ci, ca_mean + ca_ci, alpha=0.3, label='95% CI (analytic)')
+        axs[1,1].set_ylabel('Ca (ppm)')
+        axs[1,1].set_title('Calcium')
+        axs[1,1].legend()
+        axs[1,1].grid(True, alpha=0.3)
 
-        axs[4].fill_between(days, target_mg - mg_band, target_mg + mg_band, color='orange', alpha=0.15, label='Target 95% CI')
-        axs[4].axhline(TOX_MAX['Mg'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
-        axs[4].plot(days, target_mg, label='Target Mg PPM', linestyle='--', color='gray')
-        axs[4].plot(days, mg_mean, label='Mean Simulated Mg PPM')
-        axs[4].fill_between(days, mg_mean - mg_ci, mg_mean + mg_ci, alpha=0.3, label='95% CI (analytic)')
-        axs[4].set_ylabel('Mg (ppm)')
-        axs[4].legend()
-        axs[4].grid(True, alpha=0.3)
+        axs[2,0].fill_between(days, target_mg - mg_band, target_mg + mg_band, color='orange', alpha=0.15, label='Target 95% CI')
+        axs[2,0].axhline(TOX_MAX['Mg'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
+        axs[2,0].plot(days, target_mg, label='Target Mg PPM', linestyle='--', color='gray')
+        axs[2,0].plot(days, mg_mean, label='Mean Simulated Mg PPM')
+        axs[2,0].fill_between(days, mg_mean - mg_ci, mg_mean + mg_ci, alpha=0.3, label='95% CI (analytic)')
+        axs[2,0].set_ylabel('Mg (ppm)')
+        axs[2,0].set_title('Magnesium')
+        axs[2,0].legend()
+        axs[2,0].grid(True, alpha=0.3)
 
-        axs[5].fill_between(days, target_fe - fe_band, target_fe + fe_band, color='orange', alpha=0.15, label='Target 95% CI')
-        axs[5].axhline(TOX_MAX['Fe'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
-        axs[5].plot(days, target_fe, label='Target Fe PPM', linestyle='--', color='gray')
-        axs[5].plot(days, fe_mean, label='Mean Simulated Fe PPM')
-        axs[5].fill_between(days, fe_mean - fe_ci, fe_mean + fe_ci, alpha=0.3, label='95% CI (analytic)')
-        axs[5].set_ylabel('Fe (ppm)')
-        axs[5].legend()
-        axs[5].grid(True, alpha=0.3)
+        axs[2,1].fill_between(days, target_fe - fe_band, target_fe + fe_band, color='orange', alpha=0.15, label='Target 95% CI')
+        axs[2,1].axhline(TOX_MAX['Fe'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
+        axs[2,1].plot(days, target_fe, label='Target Fe PPM', linestyle='--', color='gray')
+        axs[2,1].plot(days, fe_mean, label='Mean Simulated Fe PPM')
+        axs[2,1].fill_between(days, fe_mean - fe_ci, fe_mean + fe_ci, alpha=0.3, label='95% CI (analytic)')
+        axs[2,1].set_ylabel('Fe (ppm)')
+        axs[2,1].set_title('Iron')
+        axs[2,1].legend()
+        axs[2,1].grid(True, alpha=0.3)
 
-        axs[6].plot(days[1:], cum_water_mean, label='Mean Cumulative Water Use (L for 2 plants)', color='purple')
-        axs[6].fill_between(days[1:], cum_water_mean - CI_Z * cum_water_std, cum_water_mean + CI_Z * cum_water_std, alpha=0.3, color='purple')
-        axs[6].plot(days, cum_mass_mean, label='Mean Cumulative Plant Mass (g dry weight, per plant)', color='green')
-        axs[6].set_xlabel('Days')
-        axs[6].set_ylabel('Cumulative Water (L) / Mass (g)')
-        axs[6].legend(loc='upper left')
-        axs[6].grid(True, alpha=0.3)
+        axs[3,0].plot(days[1:], cum_water_mean, label='Mean Cumulative Water Use (L for 2 plants)', color='purple')
+        axs[3,0].fill_between(days[1:], cum_water_mean - CI_Z * cum_water_std, cum_water_mean + CI_Z * cum_water_std, alpha=0.3, color='purple')
+        axs[3,0].plot(days, cum_mass_mean, label='Mean Cumulative Plant Mass (g dry weight, per plant)', color='green')
+        axs[3,0].set_ylabel('Cumulative Water (L) / Mass (g)')
+        axs[3,0].set_title('Water Use & Plant Mass')
+        axs[3,0].legend(loc='upper left')
+        axs[3,0].grid(True, alpha=0.3)
 
         # Add daily water use on a separate axis
-        ax6_twin = axs[6].twinx()
-        ax6_twin.plot(days[:SIM_DAYS], daily_w, label='Daily Water Use (L for 2 plants)', color='blue', linestyle='--', alpha=0.8)
-        ax6_twin.fill_between(days[:SIM_DAYS], daily_w - CI_Z * daily_w_std, daily_w + CI_Z * daily_w_std, alpha=0.3, color='blue')
-        ax6_twin.set_ylabel('Daily Water Use (L)', color='blue')
-        ax6_twin.tick_params(axis='y', labelcolor='blue')
+        ax30_twin = axs[3,0].twinx()
+        ax30_twin.plot(days[:SIM_DAYS], daily_w, label='Daily Water Use (L for 2 plants)', color='blue', linestyle='--', alpha=0.8)
+        ax30_twin.fill_between(days[:SIM_DAYS], daily_w - CI_Z * daily_w_std, daily_w + CI_Z * daily_w_std, alpha=0.3, color='blue')
+        ax30_twin.set_ylabel('Daily Water Use (L)', color='blue')
+        ax30_twin.tick_params(axis='y', labelcolor='blue')
 
         # Combine legends from both axes
-        lines1, labels1 = axs[6].get_legend_handles_labels()
-        lines2, labels2 = ax6_twin.get_legend_handles_labels()
-        axs[6].legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+        lines1, labels1 = axs[3,0].get_legend_handles_labels()
+        lines2, labels2 = ax30_twin.get_legend_handles_labels()
+        axs[3,0].legend(lines1 + lines2, labels1 + labels2, loc='upper left')
 
-        # Warn if any nutrient's 95% CIs do not overlap target 95% CIs (proxy for plant death risk)
-        def ci_overlap(sim, sim_ci, tgt, tgt_ci):
-            return np.any((sim - sim_ci) <= (tgt + tgt_ci)) and np.any((sim + sim_ci) >= (tgt - tgt_ci))
-        warnings = []
-        if not ci_overlap(n_mean, n_ci, target_n, n_band): warnings.append('N')
-        if not ci_overlap(p_mean, p_ci, target_p, p_band): warnings.append('P')
-        if not ci_overlap(k_mean, k_ci, target_k, k_band): warnings.append('K')
-        if not ci_overlap(ca_mean, ca_ci, target_ca, ca_band): warnings.append('Ca')
-        if not ci_overlap(mg_mean, mg_ci, target_mg, mg_band): warnings.append('Mg')
-        if not ci_overlap(fe_mean, fe_ci, target_fe, fe_band): warnings.append('Fe')
-        if warnings:
-            print(f"Warning: 95% CI non-overlap vs target for: {', '.join(warnings)}. Risk of plant failure.")
+        # Calculate EC time series
+        ec_mean = 2.0 * (n_mean + p_mean + k_mean + ca_mean + mg_mean) / 640.0
 
-        plt.tight_layout()
+        # EC plot
+        axs[3,1].plot(days, ec_mean, label='Electrical Conductivity', color='brown')
+        axs[3,1].axhline(2.5, color='red', linestyle=':', alpha=0.6, label='High EC threshold')
+        axs[3,1].axhline(1.2, color='orange', linestyle='--', alpha=0.6, label='Low EC threshold')
+        axs[3,1].set_ylabel('EC (mS/cm)')
+        axs[3,1].set_xlabel('Days')
+        axs[3,1].set_title('Electrical Conductivity')
+        axs[3,1].legend()
+        axs[3,1].grid(True, alpha=0.3)
+
+        # pH plot
+        axs[4,0].plot(days, results['ph_mean'], label='pH', color='magenta')
+        axs[4,0].axhline(TAP_PH + 0.4, color='red', linestyle=':', alpha=0.6, label=f'pH max ({TAP_PH + 0.4:.1f})')
+        axs[4,0].axhline(TAP_PH - 0.4, color='orange', linestyle='--', alpha=0.6, label=f'pH min ({TAP_PH - 0.4:.1f})')
+        axs[4,0].axhline(TAP_PH, color='blue', linestyle='-', alpha=0.3, label=f'Tap water pH ({TAP_PH})')
+        axs[4,0].set_ylabel('pH')
+        axs[4,0].set_title('pH Level')
+        axs[4,0].legend()
+        axs[4,0].grid(True, alpha=0.3)
+
+        # Alkalinity plot
+        axs[4,1].plot(days, results['alk_mean'], label='Alkalinity', color='cyan')
+        axs[4,1].axhline(TAP_ALK_MG_L, color='blue', linestyle='-', alpha=0.3, label=f'Tap water ({TAP_ALK_MG_L} mg/L)')
+        axs[4,1].set_ylabel('Alkalinity (mg/L CaCO3)')
+        axs[4,1].set_xlabel('Days')
+        axs[4,1].set_title('Alkalinity')
+        axs[4,1].legend()
+        axs[4,1].grid(True, alpha=0.3)
+
+
+        plt.tight_layout(rect=[0, 0, 1, 0.95])  # Leave space for suptitle
         if args.output:
             plt.savefig(args.output, dpi=300, bbox_inches='tight')
             print(f"Plot saved to {args.output}")
