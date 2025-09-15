@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import argparse
 
 # Constants
-RESERVOIR_VOLUME = 4.0  # liters
+RESERVOIR_VOLUME = 2.0  # liters
 AIR_TEMPERATURE = 82.0  # Fahrenheit, average for South FL October garage
 HUMIDITY = 0.75  # 75% relative humidity
 HUMIDITY_STD = 0.1  # Increased for garage variability
@@ -78,45 +78,47 @@ CI_Z = 1.96  # 95% CI multiplier for Gaussian
 
 # Green Planet GP3 system (ppm per ml/L). Conversions: P2O5->P factor 0.436, K2O->K factor 0.83; elemental % uses factor 10 ppm per 1%.
 CHEMICALS = [
-    {
-        'name': 'GP3 Grow',
-        'per_ml_ppm': {
-            'N': 20.0,
-            'P': 1.0 * 0.436 * 10.0,   # 1% P2O5
-            'K': 6.0 * 0.83 * 10.0,   # 6% K2O
-            'Ca': 0.0,
-            'Mg': 5.0,
-            'Fe': 0.0,
-        },
-        'alk_change_mg_per_ml': 0.0,
-        'ml_bounds': (0.0, 10.0),
-    },
-    {
-        'name': 'GP3 Bloom',
-        'per_ml_ppm': {
-            'N': 0.0,
-            'P': 5.0 * 0.436 * 10.0,   # 5% P2O5
-            'K': 4.0 * 0.83 * 10.0,    # 4% K2O
-            'Ca': 0.0,
-            'Mg': 15.0,
-            'Fe': 0.0,
-        },
-        'alk_change_mg_per_ml': 0.0,
-        'ml_bounds': (0.0, 10.0),
-    },
-    {
-        'name': 'GP3 Micro',
-        'per_ml_ppm': {
-            'N': 50.0,                  # 5% N
-            'P': 0.0,
-            'K': 1.0 * 0.83 * 10.0,    # 1% K2O
-            'Ca': 60.0,                 # 6% Ca
-            'Mg': 0.0,
-            'Fe': 1.0,                  # 0.1% Fe chelated
-        },
-        'alk_change_mg_per_ml': 0.0,
-        'ml_bounds': (0.0, 10.0),
-    },
+    { 'name': 'Part A', 'per_ml_ppm': {'N': 60.0, 'P': 0.0, 'K': 41.5, 'Ca': 50.0, 'Mg': 0.0, 'Fe': 1.2}, 'alk_change_mg_per_ml': 0.0, 'ml_bounds': (0.0, 10.0) },
+    { 'name': 'Part B', 'per_ml_ppm': {'N': 10.0, 'P': 21.8, 'K': 49.8, 'Ca': 0.0, 'Mg': 12.0, 'Fe': 0.0}, 'alk_change_mg_per_ml': 0.0, 'ml_bounds': (0.0, 10.0) },
+    # {
+    #     'name': 'GP3 Grow',
+    #     'per_ml_ppm': {
+    #         'N': 20.0,
+    #         'P': 1.0 * 0.436 * 10.0,   # 1% P2O5
+    #         'K': 6.0 * 0.83 * 10.0,   # 6% K2O
+    #         'Ca': 0.0,
+    #         'Mg': 5.0,
+    #         'Fe': 0.0,
+    #     },
+    #     'alk_change_mg_per_ml': 0.0,
+    #     'ml_bounds': (0.0, 10.0),
+    # },
+    # {
+    #     'name': 'GP3 Bloom',
+    #     'per_ml_ppm': {
+    #         'N': 0.0,
+    #         'P': 5.0 * 0.436 * 10.0,   # 5% P2O5
+    #         'K': 4.0 * 0.83 * 10.0,    # 4% K2O
+    #         'Ca': 0.0,
+    #         'Mg': 15.0,
+    #         'Fe': 0.0,
+    #     },
+    #     'alk_change_mg_per_ml': 0.0,
+    #     'ml_bounds': (0.0, 10.0),
+    # },
+    # {
+    #     'name': 'GP3 Micro',
+    #     'per_ml_ppm': {
+    #         'N': 50.0,                  # 5% N
+    #         'P': 0.0,
+    #         'K': 1.0 * 0.83 * 10.0,    # 1% K2O
+    #         'Ca': 60.0,                 # 6% Ca
+    #         'Mg': 0.0,
+    #         'Fe': 1.0,                  # 0.1% Fe chelated
+    #     },
+    #     'alk_change_mg_per_ml': 0.0,
+    #     'ml_bounds': (0.0, 10.0),
+    # },
     # Optional nitric acid (edit to your stock concentration or remove if not used)
     {
         'name': 'Nitric Acid',
@@ -143,6 +145,14 @@ def chem_alk_change_from_ml(mls):
     for m, chem in zip(mls, CHEMICALS):
         delta += chem.get('alk_change_mg_per_ml', 0.0) * m
     return delta
+
+def _split_x(x):
+    num_chems = len(CHEMICALS)
+    init_ml = list(x[:num_chems])
+    refill_ml = list(x[num_chems:2*num_chems])
+    alk_init_pt = x[-2]
+    alk_refill_pt = x[-1]
+    return init_ml, refill_ml, alk_init_pt, alk_refill_pt
 
 # Three-phase stoichiometric schedule (day-based)
 PHASE_GERM_END = 14
@@ -650,7 +660,25 @@ def compute_means_and_variances(ml_init_list, ml_refill_list, days, sample_param
     var_fe = add_cross(var_fe, s_fe_dli, s_fe_t, s_fe_rh)
 
     # Water: daily and cumulative
-    daily_w_mean = np.array([daily_water(d, light_dli, air_temp_f, humidity) for d in range(days)])
+    # Biomass proxy derived from mean N uptake trajectory within this call
+    # First simulate once with mean parameters and zero-variance to get N uptake trajectory
+    mean_params = {
+        'n_v_max': N_V_MAX, 'p_v_max': P_V_MAX, 'k_v_max': K_V_MAX,
+        'ca_v_max': CA_V_MAX, 'mg_v_max': MG_V_MAX, 'fe_v_max': FE_V_MAX,
+        'n_k_m': N_K_M, 'p_k_m': P_K_M, 'k_k_m': K_K_M,
+        'ca_k_m': CA_K_M, 'mg_k_m': MG_K_M, 'fe_k_m': FE_K_M,
+        'n_to_biomass': N_TO_BIOMASS,
+    }
+    # Use a modest, fixed dosing proxy to get a shape for N uptake; absolute scale is not used directly
+    num_chems = len(CHEMICALS)
+    proxy_init = [0.5]*num_chems
+    proxy_refill = [0.5]*num_chems
+    n_tmp, _, _, _, _, _, n_uptake_total_tmp, _, _, _ = simulate(proxy_init, proxy_refill, days=days,
+        sample_params=mean_params, light_dli=light_dli, air_temp_f=air_temp_f, humidity=humidity,
+        alk_init_pretreat=TAP_ALK_MG_L, alk_refill_pretreat=TAP_ALK_MG_L)
+    biomass_proxy = (n_uptake_total_tmp / max(1e-9, n_uptake_total_tmp[-1])) * 40.0  # scale to plausible 0-40 g
+    biomass_proxy = np.nan_to_num(biomass_proxy)
+    daily_w_mean = np.array([daily_water(d, light_dli, air_temp_f, humidity, biomass_proxy[d]) for d in range(days)])
     cum_water_mean = np.cumsum(daily_w_mean)
 
     def halfdiff_sq(a, b):
@@ -719,12 +747,7 @@ def build_bounds():
 
 # Objective for refill: probabilistic health with analytical uncertainty
 def objective_refill(x, sim_days=SIM_DAYS, light_dli=LIGHT_DLI, air_temp_f=AIR_TEMPERATURE, humidity=HUMIDITY):
-    num_chems = len(CHEMICALS)
-    # x layout: [init_ml_0..init_ml_{n-1}, refill_ml_0..refill_ml_{n-1}, alk_init_pt, alk_refill_pt]
-    init_ml = list(x[:num_chems])
-    refill_ml = list(x[num_chems:2*num_chems])
-    alk_init_pt = x[-2]
-    alk_refill_pt = x[-1]
+    init_ml, refill_ml, alk_init_pt, alk_refill_pt = _split_x(x)
     # Use centralized means/variances (also needed for physio-aware targets)
     mean_params = {
         'n_v_max': N_V_MAX, 'p_v_max': P_V_MAX, 'k_v_max': K_V_MAX,
@@ -816,6 +839,47 @@ def objective_refill(x, sim_days=SIM_DAYS, light_dli=LIGHT_DLI, air_temp_f=AIR_T
             + LAMBDA_EC * ec_penalty
             + LAMBDA_TOX * (tox_n + tox_p + tox_k + tox_ca + tox_mg + tox_fe))
 
+def integrated_target_masses(days, daily_w_mean, cum_mass_mean):
+    tgt_n, tgt_p, tgt_k, tgt_ca, _, _ = build_physio_targets(days, daily_w_mean, cum_mass_mean)
+    # integrate by simple sum (per-day ppm proxy); scale to mg mass target by reservoir volume if needed
+    return np.sum(tgt_n), np.sum(tgt_p), np.sum(tgt_k), np.sum(tgt_ca)
+
+def inequality_constraints(sim_days, light_dli, air_temp_f, humidity):
+    # Build inequality constraint functions c(x) >= 0
+    def constr_fun(x):
+        init_ml, refill_ml, alk_init_pt, alk_refill_pt = _split_x(x)
+        mean_params = {
+            'n_v_max': N_V_MAX, 'p_v_max': P_V_MAX, 'k_v_max': K_V_MAX,
+            'ca_v_max': CA_V_MAX, 'mg_v_max': MG_V_MAX, 'fe_v_max': FE_V_MAX,
+            'n_k_m': N_K_M, 'p_k_m': P_K_M, 'k_k_m': K_K_M,
+            'ca_k_m': CA_K_M, 'mg_k_m': MG_K_M, 'fe_k_m': FE_K_M,
+            'n_to_biomass': N_TO_BIOMASS,
+        }
+        res = compute_means_and_variances(init_ml, refill_ml, sim_days, mean_params, light_dli, air_temp_f, humidity,
+                                          alk_init_pt=alk_init_pt, alk_refill_pt=alk_refill_pt)
+        n_mean = res['mean']['N']; p_mean = res['mean']['P']; k_mean = res['mean']['K']; ca_mean = res['mean']['Ca']
+        # approximate uptake mass via tracking to target area; use integrated targets as minimum coverage
+        M_n, M_p, M_k, M_ca = integrated_target_masses(sim_days, res['daily_water_mean'], res['cum_mass_mean'])
+        cov_n = np.sum(n_mean)
+        cov_p = np.sum(p_mean)
+        cov_k = np.sum(k_mean)
+        cov_ca = np.sum(ca_mean)
+        alpha_n, alpha_p, alpha_k, alpha_ca = 0.65, 0.55, 0.60, 0.55
+        # EC / pH constraints (average within band)
+        tds_ppm = 2.0 * (n_mean + p_mean + k_mean + ca_mean + res['mean']['Mg'])
+        ec_ms = tds_ppm / 640.0
+        ec_ok = 2.0 - np.abs(np.mean(ec_ms) - 1.8)  # >=0 when mean within ~[1.1,2.5]
+        ph_ok = 0.3 - np.abs(np.mean(res['ph_mean']) - PH_BASE)  # >=0 if mean within ±0.3
+        return np.array([
+            cov_n - alpha_n * M_n,
+            cov_p - alpha_p * M_p,
+            cov_k - alpha_k * M_k,
+            cov_ca - alpha_ca * M_ca,
+            ec_ok,
+            ph_ok,
+        ])
+    return constr_fun
+
 def main():
     global RISK_LAMBDA  # Declare at function start
     args = parse_args()
@@ -838,7 +902,9 @@ def main():
     num_chems = len(CHEMICALS)
     # initial guess: 1 ml/L for each chem in init and refill, alkalinity ~60% of tap
     x0 = [1.0] * (num_chems * 2) + [max(40.0, TAP_ALK_MG_L * 0.6), max(40.0, TAP_ALK_MG_L * 0.6)]
-    result = minimize(lambda x: objective_refill(x, SIM_DAYS, light_dli, air_temp, rh), x0, bounds=build_bounds(), method='SLSQP')
+    cons_fun = inequality_constraints(SIM_DAYS, light_dli, air_temp, rh)
+    constraints = ({'type': 'ineq', 'fun': cons_fun},)
+    result = minimize(lambda x: objective_refill(x, SIM_DAYS, light_dli, air_temp, rh), x0, bounds=build_bounds(), method='SLSQP', constraints=constraints, options={'maxiter': 200, 'ftol': 1e-4})
     vec = result.x
     init_ml = list(vec[:num_chems])
     refill_ml = list(vec[num_chems:2*num_chems])

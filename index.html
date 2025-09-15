@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hydroponic Mix Planner</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>Hydroponic Mix Planner</h1>
+  </header>
+  <main class="layout">
+    <section class="card water-card">
+      <h2>Tap Water Preset</h2>
+      <div class="presets" id="water-presets">
+        <label><input type="radio" name="waterPreset" value="ro_di"> RO/DI</label>
+        <label><input type="radio" name="waterPreset" value="south_florida"> South Florida Tap</label>
+        <label><input type="radio" name="waterPreset" value="custom"> Custom</label>
+      </div>
+      <div id="custom-water" class="custom-water">
+        <div class="grid grid-6">
+          <label>Ca (mg/L)
+            <input id="water-ca" type="number" step="0.1" min="0">
+          </label>
+          <label>Mg (mg/L)
+            <input id="water-mg" type="number" step="0.1" min="0">
+          </label>
+          <label>Na (mg/L)
+            <input id="water-na" type="number" step="0.1" min="0">
+          </label>
+          <label>K (mg/L)
+            <input id="water-k" type="number" step="0.1" min="0">
+          </label>
+          <label>Alkalinity (mg/L CaCO3)
+            <input id="water-alk" type="number" step="0.1" min="0">
+          </label>
+          <label>pH
+            <input id="water-ph" type="number" step="0.1" min="0" max="14">
+          </label>
+        </div>
+        <div class="row">
+          <button id="save-custom-water" class="btn">Save Custom</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card chemicals-card">
+      <div class="header-row">
+        <h2>Chemicals</h2>
+        <button id="reset" class="btn btn-outline">Reset</button>
+      </div>
+      <div id="chemicals-list" class="chemicals-list"></div>
+      <details id="add-chem-details" class="add-chem">
+        <summary>+ Add Chemical</summary>
+        <form id="add-chem-form" class="grid grid-6">
+          <label>Name
+            <input name="name" type="text" placeholder="e.g., GP3 Grow" required>
+          </label>
+          <label>N (ppm per ml/L)
+            <input name="N" type="number" step="0.01" min="0" value="0">
+          </label>
+          <label>P (ppm per ml/L)
+            <input name="P" type="number" step="0.01" min="0" value="0">
+          </label>
+          <label>K (ppm per ml/L)
+            <input name="K" type="number" step="0.01" min="0" value="0">
+          </label>
+          <label>Ca (ppm per ml/L)
+            <input name="Ca" type="number" step="0.01" min="0" value="0">
+          </label>
+          <label>Mg (ppm per ml/L)
+            <input name="Mg" type="number" step="0.01" min="0" value="0">
+          </label>
+          <label>Fe (ppm per ml/L)
+            <input name="Fe" type="number" step="0.01" min="0" value="0">
+          </label>
+          <label>Alk change (mg/L per ml/L)
+            <input name="alk" type="number" step="0.1" value="0">
+          </label>
+          <label>Min dose (ml/L)
+            <input name="min" type="number" step="0.01" min="0" value="0">
+          </label>
+          <label>Max dose (ml/L)
+            <input name="max" type="number" step="0.01" min="0" value="10">
+          </label>
+          <div class="row col-span-6">
+            <button class="btn" type="submit">Add</button>
+          </div>
+        </form>
+      </details>
+    </section>
+
+    <section class="card selected-card">
+      <h2>Selected Chemicals</h2>
+      <ul id="selected-chemicals" class="selected-list"></ul>
+      <div class="row actions">
+        <button id="export" class="btn">Export JSON</button>
+        <button id="import" class="btn btn-outline">Import JSON</button>
+        <input id="import-file" type="file" accept="application/json" hidden>
+      </div>
+    </section>
+  </main>
+  <script defer src="./app.js"></script>
+  <noscript>This app requires JavaScript.</noscript>
+</body>
+</html>
+
+
