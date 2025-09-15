@@ -5,28 +5,73 @@ import argparse
 
 # Constants
 RESERVOIR_VOLUME = 4.0  # liters
-AIR_TEMPERATURE = 85.0  # Fahrenheit
-HUMIDITY = 0.7  # 70% relative humidity
-HUMIDITY_STD = 0.07  # Absolute RH fraction std (e.g., 0.05 = 5% RH)
-LIGHT_DLI = 25.0  # default DLI
-LIGHT_DLI_STD = 5.0  # std for DLI
-AIR_TEMPERATURE_STD = 5.0  # Fahrenheit std
+AIR_TEMPERATURE = 82.0  # Fahrenheit, average for South FL October garage
+HUMIDITY = 0.75  # 75% relative humidity
+HUMIDITY_STD = 0.1  # Increased for garage variability
+LIGHT_DLI = 20.0  # Adjusted for AeroGarden LED setup
+LIGHT_DLI_STD = 4.0  # Reduced but still accounts for some natural light variation
+AIR_TEMPERATURE_STD = 6.0  # Increased for daily/seasonal swings
 TEMP_Q10 = 2.0  # Q10 temperature factor for uptake scaling
 RISK_LAMBDA = 1.0  # weight on variance in expected loss
 
 # Phenology: germination lag and ramp for growth-stage-controlled uptake
 STAGE_S_MIN = 0.02  # logistic lower asymptote
-STAGE_D50 = 55.0  # day at 50% stage
-STAGE_K = 0.15  # logistic slope
+STAGE_D50 = 45.0  # Adjusted for faster Thai chili maturation
+STAGE_K = 0.2  # Steeper logistic for quicker ramp-up
 
 # Light and ET parameters
 K_LIGHT = 15.0  # mol/m^2/day for half-saturation of light response
 BETA_VPD = 1.0  # exponent for VPD effect on ET
-WATER_C_L_PER_PLANT = 0.4  # scaling constant for ET liters per plant per day at stage=1
+WATER_C_L_PER_PLANT = 0.3  # Slightly reduced for smaller plants/AeroGarden setup
+SLA_M2_PER_G = 0.02  # specific leaf area (m^2 leaf per g dry biomass)
+LAI_MAX = 3.0
+PLANT_SPACING_M2 = 0.10  # ground area per plant
+RESERVOIR_AREA_M2 = 0.05
+
+# Penman–Monteith-lite parameters
+WIND_SPEED = 0.3  # m/s indoor
+PSYCHROMETRIC_GAMMA = 0.066  # kPa/°C
+RAD_MJ_PER_MOL_PAR = 0.218  # MJ/m^2 per mol PAR
+NET_RAD_MULT = 1.6  # include NIR
+KC_MIN = 0.6
+KC_MAX = 1.15
+FE_DECAY_RATE = 0.001  # per-day fractional Fe loss (shaded reservoir; low photodegradation)
+FE_DECAY_RATE_STD = 0.0005
+PH_BASE = 6.0
+PH_FE_SENS = 1.0  # Fe K_m sensitivity per pH unit above 6.5
+K_PH_DRIFT = 0.0002
+K_PH_RECOVER = 0.02
+PH_STD = 0.2
+ALK_INIT_MG_L = 50.0
+K_ALK_CONV = 0.01  # mg CaCO3 per mg acid-equivalent consumed
+ALK_BUFFER_BETA = 0.01  # pH drift damping per mg/L alkalinity
+CORR_T_RH = -0.5
+CORR_T_DLI = 0.2
+CORR_DLI_RH = -0.2
+FE_REFILL_DECAY_RATE = 0.002  # per-day decay in prepared refill mix (low light exposure)
+EVAP_COEFF_MM_PER_KPA = 0.5  # Tuned for completely covered reservoir (very low evap)
+CI_Z = 1.96  # 95% CI multiplier for Gaussian
+
+# Three-phase stoichiometric schedule (day-based)
+PHASE_GERM_END = 14
+PHASE_VEG_END = 55
+def phase_for_day(day):
+    if day <= PHASE_GERM_END:
+        return 'germ'
+    if day <= PHASE_VEG_END:
+        return 'veg'
+    return 'fruit'
+
+PHASE_RATIOS = {
+    'germ':  {'P': 0.25, 'K': 0.90, 'Ca': 0.35, 'Mg': 0.08, 'Fe': 0.0030},
+    'veg':   {'P': 0.20, 'K': 1.50, 'Ca': 0.45, 'Mg': 0.10, 'Fe': 0.0035},
+    'fruit': {'P': 0.30, 'K': 2.00, 'Ca': 0.60, 'Mg': 0.12, 'Fe': 0.0040},
+}
 
 # Target tolerance (Gaussian) parameters used by objective and plotting bands
-TGT_REL = {'N': 0.10, 'P': 0.12, 'K': 0.10, 'Ca': 0.10, 'Mg': 0.12, 'Fe': 0.30}
-TGT_ABS = {'N': 5.0,  'P': 2.0,  'K': 10.0, 'Ca': 5.0,  'Mg': 2.0,  'Fe': 0.2}
+TGT_REL = {'N': 0.2, 'P': 0.25, 'K': 0.2, 'Ca': 0.2, 'Mg': 0.2, 'Fe': 0.5}
+TGT_ABS = {'N': 4.0,  'P': 1.5,  'K': 8.0, 'Ca': 4.0,  'Mg': 1.5,  'Fe': 0.15}
+TOX_MAX = {'N': 300.0, 'P': 100.0, 'K': 300.0, 'Ca': 190.0, 'Mg': 70.0, 'Fe': 5.0}
 N_A = 60.0  # ppm N per ml/L, Part A (6% N)
 N_B = 10.0  # ppm N per ml/L, Part B (1% N)
 P_A = 0.0  # ppm P per ml/L, Part A
@@ -39,35 +84,35 @@ MG_A = 0.0   # ppm Mg per ml/L, Part A
 MG_B = 12.0  # ppm Mg per ml/L, Part B (1.2% Mg)
 FE_A = 1.2   # ppm Fe per ml/L, Part A (0.12% Fe chelated)
 FE_B = 0.0   # ppm Fe per ml/L, Part B
-SIM_DAYS = 120  # simulation duration
+SIM_DAYS = 90  # Per project goal of 90-day unattended grow
 N_TO_BIOMASS = 0.02  # g biomass per mg N uptake (approx., peppers ~2-3% N by dry weight)
-N_TO_BIOMASS_STD = 0.004  # Variance for biomass conversion
+N_TO_BIOMASS_STD = 0.005  # Increased variance for biomass conversion uncertainty
 
 # Michaelis-Menten parameters (V_max in mg/day/2 plants, K_m in ppm) with std devs for variance
-N_V_MAX = 74.0  # max N uptake at peak (~37 mg/plant/day)
-N_V_MAX_STD = 14.8  # 20% std
-P_V_MAX = 34.0  # max P uptake at peak (~17 mg/plant/day)
-P_V_MAX_STD = 6.8  # 20% std
-K_V_MAX = 116.0  # max K uptake at peak (~58 mg/plant/day)
-K_V_MAX_STD = 23.2  # 20% std
-CA_V_MAX = 24.4  # max Ca uptake at peak (~12.2 mg/plant/day)
-CA_V_MAX_STD = 4.88  # 20% std
-MG_V_MAX = 11.6  # max Mg uptake at peak (~5.8 mg/plant/day)
-MG_V_MAX_STD = 2.32  # 20% std
-FE_V_MAX = 0.62  # max Fe uptake at peak (~0.31 mg/plant/day)
-FE_V_MAX_STD = 0.124  # 20% std
+N_V_MAX = 59.2  # Reduced 20% for smaller Thai plants
+N_V_MAX_STD = 14.8  # 25% std for conservatism (59.2 * 0.25 = 14.8)
+P_V_MAX = 27.2
+P_V_MAX_STD = 6.8
+K_V_MAX = 92.8
+K_V_MAX_STD = 23.2
+CA_V_MAX = 19.52
+CA_V_MAX_STD = 4.88
+MG_V_MAX = 9.28
+MG_V_MAX_STD = 2.32
+FE_V_MAX = 0.496
+FE_V_MAX_STD = 0.124
 N_K_M = 100.0    # half-saturation for N (~50% target 200 ppm)
-N_K_M_STD = 20.0  # 20% std
+N_K_M_STD = 25.0  # Increased to 25% for conservatism
 P_K_M = 30.0     # half-saturation for P (~50% target 60 ppm)
-P_K_M_STD = 6.0  # 20% std
+P_K_M_STD = 7.5
 K_K_M = 135.0    # half-saturation for K (~50% target 270 ppm)
-K_K_M_STD = 27.0  # 20% std
+K_K_M_STD = 33.75
 CA_K_M = 85.0    # half-saturation for Ca (~50% target 170 ppm)
-CA_K_M_STD = 17.0  # 20% std
+CA_K_M_STD = 21.25
 MG_K_M = 28.0    # half-saturation for Mg (~50% target 56 ppm)
-MG_K_M_STD = 5.6  # 20% std
+MG_K_M_STD = 7.0
 FE_K_M = 1.5     # half-saturation for Fe (~50% target 3 ppm)
-FE_K_M_STD = 0.3  # 20% std
+FE_K_M_STD = 0.375
 
 # Note: Model includes concentration-dependent uptake with variances on uncertain params (V_max, K_m, humidity scale, biomass conv.).
 # Optimization weighted by nutrient importance. Plots show mean +/- 1 std shading from Monte Carlo sims.
@@ -94,13 +139,37 @@ def light_saturation(dli, k_light=K_LIGHT):
     return dli / (dli + k_light)
 
 # Define daily water uptake for 2 Thai pepper plants (L/day total)
-def daily_water(day, light_dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY):
-    s = logistic_stage(day)
-    q10_factor = TEMP_Q10 ** ((temp_f - 77.0) / 18.0)
-    vpd_term = max(0.05, vpd_kpa(temp_f, rh_frac)) ** BETA_VPD
-    light_term = light_saturation(light_dli)
-    w_per_plant = WATER_C_L_PER_PLANT * s * q10_factor * light_term * vpd_term
-    return 2.0 * w_per_plant
+def _lai_from_biomass(biomass_g):
+    lai = min(LAI_MAX, SLA_M2_PER_G * max(0.0, biomass_g)) / PLANT_SPACING_M2
+    return max(0.0, lai)
+
+def daily_water(day, light_dli=LIGHT_DLI, temp_f=AIR_TEMPERATURE, rh_frac=HUMIDITY, biomass_g_per_plant=5.0):
+    # Penman–Monteith–lite
+    t_c = (temp_f - 32.0) * 5.0 / 9.0
+    vpd = max(0.05, vpd_kpa(temp_f, rh_frac))  # kPa
+    s_slope = 4098 * (0.6108 * np.exp((17.27 * t_c) / (t_c + 237.3))) / ((t_c + 237.3) ** 2)  # kPa/°C
+    # Net radiation from DLI
+    rad_mj = light_dli * RAD_MJ_PER_MOL_PAR * NET_RAD_MULT
+    # Canopy coefficient via LAI and stage (stage-weighted to suppress seedling transpiration)
+    s_stage = logistic_stage(day)
+    lai = _lai_from_biomass(biomass_g_per_plant)
+    kc_base = KC_MIN + (KC_MAX - KC_MIN) * (lai / max(1e-9, LAI_MAX))
+    kc = np.clip(kc_base * s_stage, 0.0, KC_MAX)
+
+    # FAO-56 ET0-like (mm/day) without soil heat flux and with low wind speed simplification
+    num = 0.408 * s_slope * rad_mj + PSYCHROMETRIC_GAMMA * (900.0 / (t_c + 273.0)) * WIND_SPEED * vpd
+    den = s_slope + PSYCHROMETRIC_GAMMA * (1.0 + 0.34 * WIND_SPEED)
+    et0_mm = max(0.0, num / max(1e-6, den))
+    transp_mm = kc * et0_mm
+
+    # Reservoir evaporation (mm/day) from VPD
+    evap_mm = EVAP_COEFF_MM_PER_KPA * vpd
+
+    # Convert to liters
+    # 1 mm over 1 m^2 equals 1 liter
+    transp_l_per_plant = transp_mm * PLANT_SPACING_M2
+    evap_l_total = evap_mm * RESERVOIR_AREA_M2
+    return 2.0 * transp_l_per_plant + evap_l_total
 
 # Humidity scale mapping from climate via VPD (kPa)
 def humidity_scale_from_climate(temp_f, rh_frac, alpha=0.6):
@@ -137,52 +206,70 @@ def uptake_fe(c, d, v_max=FE_V_MAX, k_m=FE_K_M, total_days=SIM_DAYS, dli=LIGHT_D
 
 # Target concentrations (ppm elemental)
 def target_n_ppm(d):
-    if d < 30:
-        return 50 + 2 * d  # 50 to 110 ppm N
-    elif d < 60:
-        return 110 + 3 * (d - 30)  # 110 to 200 ppm N
-    else:
-        return 200 + 0.5 * (d - 60)  # 200 to 260 ppm N
+    s = logistic_stage(d)
+    return 50 + (260 - 50) * s
 
 def target_p_ppm(d):
-    if d < 30:
-        return 20 + 0.67 * d  # 20 to 40 ppm P
-    elif d < 60:
-        return 40 + 0.67 * (d - 30)  # 40 to 60 ppm P
-    else:
-        return 60 + 0.17 * (d - 60)  # 60 to 70 ppm P
+    s = logistic_stage(d)
+    return 20 + (70 - 20) * s
 
 def target_k_ppm(d):
-    if d < 30:
-        return 50 + 1.5 * d  # 50 to 95 ppm K
-    elif d < 60:
-        return 95 + 2 * (d - 30)  # 95 to 175 ppm K (continuous)
-    else:
-        return 175 + 1 * (d - 60)  # 175 to 235 ppm K
+    s = logistic_stage(d)
+    return 50 + (235 - 50) * s
 
 def target_ca_ppm(d):
-    if d < 30:
-        return 50 + 1 * d  # 50 to 80 ppm Ca
-    elif d < 60:
-        return 80 + 2 * (d - 30)  # 80 to 140 ppm Ca
-    else:
-        return 140 + 0.5 * (d - 60)  # 140 to 170 ppm Ca
+    s = logistic_stage(d)
+    return 50 + (170 - 50) * s
 
 def target_mg_ppm(d):
-    if d < 30:
-        return 20 + 0.5 * d  # 20 to 35 ppm Mg
-    elif d < 60:
-        return 35 + 0.5 * (d - 30)  # 35 to 50 ppm Mg
-    else:
-        return 50 + 0.1 * (d - 60)  # 50 to 56 ppm Mg
+    s = logistic_stage(d)
+    return 20 + (56 - 20) * s
 
 def target_fe_ppm(d):
-    if d < 30:
-        return 1 + 0.033 * d  # 1 to 2 ppm Fe
-    elif d < 60:
-        return 2 + 0.033 * (d - 30)  # 2 to 3 ppm Fe
-    else:
-        return 3  # steady at 3 ppm Fe
+    s = logistic_stage(d)
+    return 1 + (3 - 1) * s
+
+# Physiology-aware target construction: scale base targets by ET and biomass
+def build_physio_targets(days, daily_w_mean, cum_mass_mean):
+    days_arr = np.arange(days + 1)
+    base_n = np.array([target_n_ppm(d) for d in days_arr])
+    base_p = np.array([target_p_ppm(d) for d in days_arr])
+    base_k = np.array([target_k_ppm(d) for d in days_arr])
+    base_ca = np.array([target_ca_ppm(d) for d in days_arr])
+    base_mg = np.array([target_mg_ppm(d) for d in days_arr])
+    base_fe = np.array([target_fe_ppm(d) for d in days_arr])
+
+    # Build normalized ET and biomass signals
+    et = np.concatenate([[0.0], np.array(daily_w_mean)])  # align to days+1
+    et_norm = et / max(1e-6, np.percentile(et, 90))
+    bio = cum_mass_mean
+    bio_norm = bio / max(1e-6, bio[-1])
+
+    # Multipliers: modest adjustments only
+    n_mult = np.clip(0.95 + 0.20 * bio_norm, 0.9, 1.15)
+    p_mult = np.clip(1.00 + 0.10 * (1.0 - bio_norm), 0.95, 1.10)  # a bit higher early
+    k_mult = np.clip(1.00 + 0.25 * bio_norm, 0.95, 1.25)
+    # Ca: lower target when ET is high to avoid accumulation; slightly higher when ET is low (mass-flow limited)
+    ca_mult = np.clip(1.08 - 0.20 * et_norm, 0.85, 1.10)
+    mg_mult = np.clip(0.98 + 0.10 * bio_norm, 0.95, 1.12)
+    fe_mult = np.clip(1.00 + 0.10 * (1.0 - bio_norm), 0.90, 1.10)
+
+    tgt_n = base_n * n_mult
+    tgt_p = base_p * p_mult
+    tgt_k = base_k * k_mult
+    tgt_ca = base_ca * ca_mult
+    tgt_mg = base_mg * mg_mult
+    tgt_fe = base_fe * fe_mult
+
+    # Respect toxicity maxima softly by capping targets near max threshold
+    tgt_n = np.minimum(tgt_n, TOX_MAX['N'] * 0.98)
+    tgt_p = np.minimum(tgt_p, TOX_MAX['P'] * 0.98)
+    tgt_k = np.minimum(tgt_k, TOX_MAX['K'] * 0.98)
+    tgt_ca = np.minimum(tgt_ca, TOX_MAX['Ca'] * 0.98)
+    tgt_mg = np.minimum(tgt_mg, TOX_MAX['Mg'] * 0.98)
+    tgt_fe = np.minimum(tgt_fe, TOX_MAX['Fe'] * 0.98)
+
+    return tgt_n, tgt_p, tgt_k, tgt_ca, tgt_mg, tgt_fe
 
 # Simulation function: evolve concentrations with concentration-dependent uptake and param variance
 def simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=SIM_DAYS, sample_params=None, light_dli=LIGHT_DLI, air_temp_f=AIR_TEMPERATURE, humidity=HUMIDITY):
@@ -222,52 +309,89 @@ def simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=SIM_DAYS, samp
     mg_ppm[0] = MG_A * ml_a_init + MG_B * ml_b_init
     fe_ppm[0] = FE_A * ml_a_init + FE_B * ml_b_init
 
+    ph = np.full(days + 1, PH_BASE)
+    alkalinity = np.full(days + 1, ALK_INIT_MG_L)
     for d in range(days):
-        W = daily_water(d, light_dli, air_temp_f, humidity)
+        biomass_g_per_plant = (n_uptake_total[d] * n_to_biomass) / 2.0
+        W = daily_water(d, light_dli, air_temp_f, humidity, biomass_g_per_plant)
 
-        # Concentration-dependent uptake with sampled params
-        U_n = uptake_n(n_ppm[d], d, n_v_max, n_k_m, days, light_dli, air_temp_f, humidity)
-        U_p = uptake_p(p_ppm[d], d, p_v_max, p_k_m, days, light_dli, air_temp_f, humidity)
-        U_k = uptake_k(k_ppm[d], d, k_v_max, k_k_m, days, light_dli, air_temp_f, humidity)
-        U_ca = uptake_ca(ca_ppm[d], d, ca_v_max, ca_k_m, days, light_dli, air_temp_f, humidity)
-        U_mg = uptake_mg(mg_ppm[d], d, mg_v_max, mg_k_m, days, light_dli, air_temp_f, humidity)
-        U_fe = uptake_fe(fe_ppm[d], d, fe_v_max, fe_k_m, days, light_dli, air_temp_f, humidity)
+        # Potential uptake (Michaelis-Menten)
+        U_n_mm = uptake_n(n_ppm[d], d, n_v_max, n_k_m, days, light_dli, air_temp_f, humidity)
+        U_p_mm = uptake_p(p_ppm[d], d, p_v_max, p_k_m, days, light_dli, air_temp_f, humidity)
+        U_k_mm = uptake_k(k_ppm[d], d, k_v_max, k_k_m, days, light_dli, air_temp_f, humidity)
+        U_ca_mm = uptake_ca(ca_ppm[d], d, ca_v_max, ca_k_m, days, light_dli, air_temp_f, humidity)
+        U_mg_mm = uptake_mg(mg_ppm[d], d, mg_v_max, mg_k_m, days, light_dli, air_temp_f, humidity)
+        # pH-modulated Fe K_m (reduced availability at higher pH)
+        fe_k_m_eff = fe_k_m * (1.0 + PH_FE_SENS * max(0.0, ph[d] - 6.5))
+        U_fe_mm = uptake_fe(fe_ppm[d], d, fe_v_max, fe_k_m_eff, days, light_dli, air_temp_f, humidity)
 
-        # Cap by available mass
-        U_n_actual = min(U_n, n_ppm[d] * RESERVOIR_VOLUME)
+        # Actual N uptake limited by available mass only (demand handled via ratios for others)
+        U_n_actual = min(U_n_mm, n_ppm[d] * RESERVOIR_VOLUME)
         n_uptake_total[d + 1] = n_uptake_total[d] + U_n_actual
         mass_n_after = n_ppm[d] * RESERVOIR_VOLUME - U_n_actual
         n_mass_new = mass_n_after + (N_A * ml_a_refill + N_B * ml_b_refill) * W
         n_ppm[d + 1] = max(0, n_mass_new / RESERVOIR_VOLUME)
 
-        U_p_actual = min(U_p, p_ppm[d] * RESERVOIR_VOLUME)
+        # Three-phase stoichiometric ratios relative to N uptake
+        phs = phase_for_day(d)
+        ratio_p_to_n = PHASE_RATIOS[phs]['P']
+        ratio_k_to_n = PHASE_RATIOS[phs]['K']
+        ratio_ca_to_n = PHASE_RATIOS[phs]['Ca']
+        ratio_mg_to_n = PHASE_RATIOS[phs]['Mg']
+        ratio_fe_to_n = PHASE_RATIOS[phs]['Fe']
+
+        demand_p = ratio_p_to_n * U_n_actual
+        demand_k = ratio_k_to_n * U_n_actual
+        demand_ca = ratio_ca_to_n * U_n_actual
+        demand_mg = ratio_mg_to_n * U_n_actual
+        demand_fe = ratio_fe_to_n * U_n_actual
+
+        # Actual uptakes capped by MM, demand, and available mass
+        U_p_actual = min(U_p_mm, demand_p, p_ppm[d] * RESERVOIR_VOLUME)
         mass_p_after = p_ppm[d] * RESERVOIR_VOLUME - U_p_actual
         p_mass_new = mass_p_after + (P_A * ml_a_refill + P_B * ml_b_refill) * W
         p_ppm[d + 1] = max(0, p_mass_new / RESERVOIR_VOLUME)
 
-        U_k_actual = min(U_k, k_ppm[d] * RESERVOIR_VOLUME)
+        U_k_actual = min(U_k_mm, demand_k, k_ppm[d] * RESERVOIR_VOLUME)
         mass_k_after = k_ppm[d] * RESERVOIR_VOLUME - U_k_actual
         k_mass_new = mass_k_after + (K_A * ml_a_refill + K_B * ml_b_refill) * W
         k_ppm[d + 1] = max(0, k_mass_new / RESERVOIR_VOLUME)
 
-        U_ca_actual = min(U_ca, ca_ppm[d] * RESERVOIR_VOLUME)
+        # Ca mass-flow cap based on transpiration delivery (W L/day * ppm mg/L)
+        ca_mass_flow_cap = W * ca_ppm[d]
+        U_ca_actual = min(U_ca_mm, demand_ca, ca_ppm[d] * RESERVOIR_VOLUME, ca_mass_flow_cap)
         mass_ca_after = ca_ppm[d] * RESERVOIR_VOLUME - U_ca_actual
         ca_mass_new = mass_ca_after + (CA_A * ml_a_refill + CA_B * ml_b_refill) * W
         ca_ppm[d + 1] = max(0, ca_mass_new / RESERVOIR_VOLUME)
 
-        U_mg_actual = min(U_mg, mg_ppm[d] * RESERVOIR_VOLUME)
+        U_mg_actual = min(U_mg_mm, demand_mg, mg_ppm[d] * RESERVOIR_VOLUME)
         mass_mg_after = mg_ppm[d] * RESERVOIR_VOLUME - U_mg_actual
         mg_mass_new = mass_mg_after + (MG_A * ml_a_refill + MG_B * ml_b_refill) * W
         mg_ppm[d + 1] = max(0, mg_mass_new / RESERVOIR_VOLUME)
 
-        U_fe_actual = min(U_fe, fe_ppm[d] * RESERVOIR_VOLUME)
+        U_fe_actual = min(U_fe_mm, demand_fe, fe_ppm[d] * RESERVOIR_VOLUME)
         mass_fe_after = fe_ppm[d] * RESERVOIR_VOLUME - U_fe_actual
-        fe_mass_new = mass_fe_after + (FE_A * ml_a_refill + FE_B * ml_b_refill) * W
+        # Add Fe from refill with decay in prepared refill over time
+        fe_add_refill = (FE_A * ml_a_refill + FE_B * ml_b_refill) * W * ((1.0 - FE_REFILL_DECAY_RATE) ** d)
+        fe_mass_new = mass_fe_after + fe_add_refill
+        # Apply Fe decay after uptake and refill addition
+        fe_mass_new *= (1.0 - FE_DECAY_RATE)
         fe_ppm[d + 1] = max(0, fe_mass_new / RESERVOIR_VOLUME)
+
+        # Simple pH drift: uptake of cations > anions raises pH; alkalinity buffers drift
+        cation_uptake = (U_k_actual + U_ca_actual + U_mg_actual)
+        anion_uptake = (U_n_actual + U_p_actual)
+        acid_eq_mg = max(0.0, (anion_uptake - cation_uptake))  # positive acidifies; consume alkalinity
+        alk_mass_prev = alkalinity[d] * RESERVOIR_VOLUME
+        alk_mass_new = max(0.0, alk_mass_prev - K_ALK_CONV * acid_eq_mg)
+        alkalinity[d + 1] = alk_mass_new / max(1e-9, RESERVOIR_VOLUME)
+        buffer = 1.0 / (1.0 + ALK_BUFFER_BETA * alkalinity[d])
+        ph_delta = buffer * K_PH_DRIFT * ((cation_uptake - anion_uptake) / max(1e-6, RESERVOIR_VOLUME))
+        ph[d + 1] = ph[d] + ph_delta - K_PH_RECOVER * (ph[d] - PH_BASE)
 
     cumulative_mass = n_uptake_total * n_to_biomass / 2  # g dry weight per plant (2 plants)
 
-    return n_ppm, p_ppm, k_ppm, ca_ppm, mg_ppm, fe_ppm, n_uptake_total, cumulative_mass
+    return n_ppm, p_ppm, k_ppm, ca_ppm, mg_ppm, fe_ppm, n_uptake_total, cumulative_mass, ph, alkalinity
 
 # Centralized computation of means and variances (±σ propagation of constant climate and uptake parameters)
 def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days, sample_params, light_dli, air_temp_f, humidity):
@@ -291,7 +415,7 @@ def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, 
         'n_to_biomass': sample_params.get('n_to_biomass', N_TO_BIOMASS),
     }
 
-    n_mean, p_mean, k_mean, ca_mean, mg_mean, fe_mean, n_uptake_total, cum_mass_mean = simulate(
+    n_mean, p_mean, k_mean, ca_mean, mg_mean, fe_mean, n_uptake_total, cum_mass_mean, ph_mean, alk_mean = simulate(
         ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params, light_dli=light_dli, air_temp_f=air_temp_f, humidity=humidity
     )
 
@@ -304,8 +428,8 @@ def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, 
 
     def add_var_for_params(params_plus, params_minus, ldli, tempf, rh):
         nonlocal var_n, var_p, var_k, var_ca, var_mg, var_fe
-        n_p, p_p, k_p, ca_p, mg_p, fe_p, _, _ = simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=params_plus, light_dli=ldli, air_temp_f=tempf, humidity=rh)
-        n_m, p_m, k_m_, ca_m, mg_m, fe_m, _, _ = simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=params_minus, light_dli=ldli, air_temp_f=tempf, humidity=rh)
+        n_p, p_p, k_p, ca_p, mg_p, fe_p, _, _, _, _ = simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=params_plus, light_dli=ldli, air_temp_f=tempf, humidity=rh)
+        n_m, p_m, k_m_, ca_m, mg_m, fe_m, _, _, _, _ = simulate(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=params_minus, light_dli=ldli, air_temp_f=tempf, humidity=rh)
         var_n += ((n_p - n_m) / 2.0) ** 2
         var_p += ((p_p - p_m) / 2.0) ** 2
         var_k += ((k_p - k_m_) / 2.0) ** 2
@@ -324,6 +448,14 @@ def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, 
         p_minus[name] = p_minus[name] - std
         add_var_for_params(p_plus, p_minus, light_dli, air_temp_f, humidity)
 
+    # Fe decay rate uncertainty
+    p_plus = dict(mean_params); p_minus = dict(mean_params)
+    globals()['FE_DECAY_RATE'] = FE_DECAY_RATE + FE_DECAY_RATE_STD
+    add_var_for_params(p_plus, p_minus, light_dli, air_temp_f, humidity)
+    globals()['FE_DECAY_RATE'] = FE_DECAY_RATE - FE_DECAY_RATE_STD
+    add_var_for_params(p_plus, p_minus, light_dli, air_temp_f, humidity)
+    globals()['FE_DECAY_RATE'] = FE_DECAY_RATE  # restore
+
     # Climate parameters (constant across days)
     add_var_for_params(mean_params, mean_params, light_dli + LIGHT_DLI_STD, air_temp_f, humidity)
     add_var_for_params(mean_params, mean_params, max(0.0, light_dli - LIGHT_DLI_STD), air_temp_f, humidity)
@@ -331,6 +463,72 @@ def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, 
     add_var_for_params(mean_params, mean_params, light_dli, air_temp_f - AIR_TEMPERATURE_STD, humidity)
     add_var_for_params(mean_params, mean_params, light_dli, air_temp_f, min(0.99, humidity + HUMIDITY_STD))
     add_var_for_params(mean_params, mean_params, light_dli, air_temp_f, max(0.0, humidity - HUMIDITY_STD))
+
+    # Climate cross-covariance using finite-difference sensitivities
+    sig_dli = LIGHT_DLI_STD
+    sig_t = AIR_TEMPERATURE_STD
+    sig_rh = HUMIDITY_STD
+    # DLI sensitivities
+    n_dli_p, p_dli_p, k_dli_p, ca_dli_p, mg_dli_p, fe_dli_p, _, _, _, _ = simulate(
+        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params,
+        light_dli=light_dli + sig_dli, air_temp_f=air_temp_f, humidity=humidity
+    )
+    n_dli_m, p_dli_m, k_dli_m, ca_dli_m, mg_dli_m, fe_dli_m, _, _, _, _ = simulate(
+        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params,
+        light_dli=max(0.0, light_dli - sig_dli), air_temp_f=air_temp_f, humidity=humidity
+    )
+    s_n_dli = (n_dli_p - n_dli_m) / (2.0 * max(1e-9, sig_dli))
+    s_p_dli = (p_dli_p - p_dli_m) / (2.0 * max(1e-9, sig_dli))
+    s_k_dli = (k_dli_p - k_dli_m) / (2.0 * max(1e-9, sig_dli))
+    s_ca_dli = (ca_dli_p - ca_dli_m) / (2.0 * max(1e-9, sig_dli))
+    s_mg_dli = (mg_dli_p - mg_dli_m) / (2.0 * max(1e-9, sig_dli))
+    s_fe_dli = (fe_dli_p - fe_dli_m) / (2.0 * max(1e-9, sig_dli))
+
+    # Temperature sensitivities
+    n_t_p, p_t_p, k_t_p, ca_t_p, mg_t_p, fe_t_p, _, _, _, _ = simulate(
+        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params,
+        light_dli=light_dli, air_temp_f=air_temp_f + sig_t, humidity=humidity
+    )
+    n_t_m, p_t_m, k_t_m, ca_t_m, mg_t_m, fe_t_m, _, _, _, _ = simulate(
+        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params,
+        light_dli=light_dli, air_temp_f=air_temp_f - sig_t, humidity=humidity
+    )
+    s_n_t = (n_t_p - n_t_m) / (2.0 * max(1e-9, sig_t))
+    s_p_t = (p_t_p - p_t_m) / (2.0 * max(1e-9, sig_t))
+    s_k_t = (k_t_p - k_t_m) / (2.0 * max(1e-9, sig_t))
+    s_ca_t = (ca_t_p - ca_t_m) / (2.0 * max(1e-9, sig_t))
+    s_mg_t = (mg_t_p - mg_t_m) / (2.0 * max(1e-9, sig_t))
+    s_fe_t = (fe_t_p - fe_t_m) / (2.0 * max(1e-9, sig_t))
+
+    # Humidity sensitivities
+    n_rh_p, p_rh_p, k_rh_p, ca_rh_p, mg_rh_p, fe_rh_p, _, _, _, _ = simulate(
+        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params,
+        light_dli=light_dli, air_temp_f=air_temp_f, humidity=min(0.99, humidity + sig_rh)
+    )
+    n_rh_m, p_rh_m, k_rh_m, ca_rh_m, mg_rh_m, fe_rh_m, _, _, _, _ = simulate(
+        ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, days=days, sample_params=mean_params,
+        light_dli=light_dli, air_temp_f=air_temp_f, humidity=max(0.0, humidity - sig_rh)
+    )
+    s_n_rh = (n_rh_p - n_rh_m) / (2.0 * max(1e-9, sig_rh))
+    s_p_rh = (p_rh_p - p_rh_m) / (2.0 * max(1e-9, sig_rh))
+    s_k_rh = (k_rh_p - k_rh_m) / (2.0 * max(1e-9, sig_rh))
+    s_ca_rh = (ca_rh_p - ca_rh_m) / (2.0 * max(1e-9, sig_rh))
+    s_mg_rh = (mg_rh_p - mg_rh_m) / (2.0 * max(1e-9, sig_rh))
+    s_fe_rh = (fe_rh_p - fe_rh_m) / (2.0 * max(1e-9, sig_rh))
+
+    def add_cross(var_arr, s_dli, s_t, s_rh):
+        return var_arr + (
+            2.0 * CORR_T_DLI * sig_t * sig_dli * s_t * s_dli +
+            2.0 * CORR_DLI_RH * sig_dli * sig_rh * s_dli * s_rh +
+            2.0 * CORR_T_RH * sig_t * sig_rh * s_t * s_rh
+        )
+
+    var_n = add_cross(var_n, s_n_dli, s_n_t, s_n_rh)
+    var_p = add_cross(var_p, s_p_dli, s_p_t, s_p_rh)
+    var_k = add_cross(var_k, s_k_dli, s_k_t, s_k_rh)
+    var_ca = add_cross(var_ca, s_ca_dli, s_ca_t, s_ca_rh)
+    var_mg = add_cross(var_mg, s_mg_dli, s_mg_t, s_mg_rh)
+    var_fe = add_cross(var_fe, s_fe_dli, s_fe_t, s_fe_rh)
 
     # Water: daily and cumulative
     daily_w_mean = np.array([daily_water(d, light_dli, air_temp_f, humidity) for d in range(days)])
@@ -349,6 +547,13 @@ def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, 
     daily_w_var = halfdiff_sq(daily_w_dli_plus, daily_w_dli_minus) + \
                    halfdiff_sq(daily_w_temp_plus, daily_w_temp_minus) + \
                    halfdiff_sq(daily_w_rh_plus, daily_w_rh_minus)
+    # Add cross-covariance terms for daily water using sensitivities
+    s_w_dli = (np.array(daily_w_dli_plus) - np.array(daily_w_dli_minus)) / (2.0 * max(1e-9, sig_dli))
+    s_w_t = (np.array(daily_w_temp_plus) - np.array(daily_w_temp_minus)) / (2.0 * max(1e-9, sig_t))
+    s_w_rh = (np.array(daily_w_rh_plus) - np.array(daily_w_rh_minus)) / (2.0 * max(1e-9, sig_rh))
+    daily_w_var += 2.0 * CORR_T_DLI * sig_t * sig_dli * s_w_t * s_w_dli \
+                   + 2.0 * CORR_DLI_RH * sig_dli * sig_rh * s_w_dli * s_w_rh \
+                   + 2.0 * CORR_T_RH * sig_t * sig_rh * s_w_t * s_w_rh
     # Constant-in-time parameter uncertainties induce fully time-correlated effects per parameter.
     # Compute cumulative variance from cumulative trajectories under ±σ per parameter and sum contributions.
     C_dli_plus = np.cumsum(daily_w_dli_plus)
@@ -360,12 +565,21 @@ def compute_means_and_variances(ml_a_init, ml_b_init, ml_a_refill, ml_b_refill, 
     cum_water_var = halfdiff_sq(C_dli_plus, C_dli_minus) + \
                     halfdiff_sq(C_temp_plus, C_temp_minus) + \
                     halfdiff_sq(C_rh_plus, C_rh_minus)
+    # Add cross-covariance terms for cumulative water using sensitivities
+    s_cw_dli = (np.array(C_dli_plus) - np.array(C_dli_minus)) / (2.0 * max(1e-9, sig_dli))
+    s_cw_t = (np.array(C_temp_plus) - np.array(C_temp_minus)) / (2.0 * max(1e-9, sig_t))
+    s_cw_rh = (np.array(C_rh_plus) - np.array(C_rh_minus)) / (2.0 * max(1e-9, sig_rh))
+    cum_water_var += 2.0 * CORR_T_DLI * sig_t * sig_dli * s_cw_t * s_cw_dli \
+                     + 2.0 * CORR_DLI_RH * sig_dli * sig_rh * s_cw_dli * s_cw_rh \
+                     + 2.0 * CORR_T_RH * sig_t * sig_rh * s_cw_t * s_cw_rh
 
     return {
         'mean': {'N': n_mean, 'P': p_mean, 'K': k_mean, 'Ca': ca_mean, 'Mg': mg_mean, 'Fe': fe_mean},
         'var': {'N': var_n, 'P': var_p, 'K': var_k, 'Ca': var_ca, 'Mg': var_mg, 'Fe': var_fe},
         'n_uptake_total': n_uptake_total,
         'cum_mass_mean': cum_mass_mean,
+        'ph_mean': ph_mean,
+        'alk_mean': alk_mean,
         'daily_water_mean': daily_w_mean,
         'daily_water_var': daily_w_var,
         'cum_water_mean': cum_water_mean,
@@ -379,16 +593,9 @@ bounds = [(0, 10), (0, 10), (0, 10), (0, 10)]
 def objective_refill(x, sim_days=SIM_DAYS, light_dli=LIGHT_DLI, air_temp_f=AIR_TEMPERATURE, humidity=HUMIDITY):
     if len(x) == 2:
         ml_a_init, ml_b_init = 1.0, 1.0  # use default initial concentrations if only refill provided
-        ml_a_refill, ml_b_refill = x
     else:
         ml_a_init, ml_b_init, ml_a_refill, ml_b_refill = x
-    target_n = np.array([target_n_ppm(d) for d in range(sim_days + 1)])
-    target_p = np.array([target_p_ppm(d) for d in range(sim_days + 1)])
-    target_k = np.array([target_k_ppm(d) for d in range(sim_days + 1)])
-    target_ca = np.array([target_ca_ppm(d) for d in range(sim_days + 1)])
-    target_mg = np.array([target_mg_ppm(d) for d in range(sim_days + 1)])
-    target_fe = np.array([target_fe_ppm(d) for d in range(sim_days + 1)])
-    # Use centralized means/variances
+    # Use centralized means/variances (also needed for physio-aware targets)
     mean_params = {
         'n_v_max': N_V_MAX, 'p_v_max': P_V_MAX, 'k_v_max': K_V_MAX,
         'ca_v_max': CA_V_MAX, 'mg_v_max': MG_V_MAX, 'fe_v_max': FE_V_MAX,
@@ -401,6 +608,9 @@ def objective_refill(x, sim_days=SIM_DAYS, light_dli=LIGHT_DLI, air_temp_f=AIR_T
     ca_sim = results['mean']['Ca']; mg_sim = results['mean']['Mg']; fe_sim = results['mean']['Fe']
     var_n = results['var']['N']; var_p = results['var']['P']; var_k = results['var']['K']
     var_ca = results['var']['Ca']; var_mg = results['var']['Mg']; var_fe = results['var']['Fe']
+    # Physio-aware targets driven by ET and biomass
+    tgt_n, tgt_p, tgt_k, tgt_ca, tgt_mg, tgt_fe = build_physio_targets(sim_days, results['daily_water_mean'], results['cum_mass_mean'])
+    target_n = tgt_n; target_p = tgt_p; target_k = tgt_k; target_ca = tgt_ca; target_mg = tgt_mg; target_fe = tgt_fe
 
     # Gaussian target loss: per-day NLL with combined variance (model + target)
     def target_var(arr_target, key):
@@ -428,10 +638,37 @@ def objective_refill(x, sim_days=SIM_DAYS, light_dli=LIGHT_DLI, air_temp_f=AIR_T
     loss_ca = np.mean(((ca_sim - target_ca)**2) / ca_tot_var + np.log(ca_tot_var))
     loss_mg = np.mean(((mg_sim - target_mg)**2) / mg_tot_var + np.log(mg_tot_var))
     loss_fe = np.mean(((fe_sim - target_fe)**2) / fe_tot_var + np.log(fe_tot_var))
+    # pH Gaussian penalty
+    ph = results['ph_mean']
+    ph_var = PH_STD ** 2
+    loss_ph = np.mean(((ph - PH_BASE) ** 2) / (ph_var + 1e-9) + np.log(ph_var + 1e-9))
 
-    return loss_n + loss_p + loss_k + loss_ca + loss_mg + loss_fe
+    # EC soft guard: estimate EC from major ions (heuristic)
+    # Assume TDS ppm ~ 2.0 * (N+P+K+Ca+Mg) to include counter-ions; EC (mS/cm) ~ TDS/640
+    tds_ppm = 2.0 * (n_sim + p_sim + k_sim + ca_sim + mg_sim)
+    ec_ms = tds_ppm / 640.0
+    ec_low, ec_high = 1.2, 2.5
+    under = np.maximum(0.0, ec_low - ec_ms)
+    over = np.maximum(0.0, ec_ms - ec_high)
+    ec_penalty = np.mean(under**2 + over**2)
+    LAMBDA_EC = 0.5
+
+    # Asymmetric toxicity penalties (soft upper bounds)
+    TOX_MAX = {'N': 300.0, 'P': 100.0, 'K': 300.0, 'Ca': 190.0, 'Mg': 70.0, 'Fe': 4.0}
+    tox_n = np.mean(np.maximum(0.0, n_sim - TOX_MAX['N'])**2)
+    tox_p = np.mean(np.maximum(0.0, p_sim - TOX_MAX['P'])**2)
+    tox_k = np.mean(np.maximum(0.0, k_sim - TOX_MAX['K'])**2)
+    tox_ca = np.mean(np.maximum(0.0, ca_sim - TOX_MAX['Ca'])**2)
+    tox_mg = np.mean(np.maximum(0.0, mg_sim - TOX_MAX['Mg'])**2)
+    tox_fe = np.mean(np.maximum(0.0, fe_sim - TOX_MAX['Fe'])**2)
+    LAMBDA_TOX = 0.01
+
+    return (loss_n + loss_p + loss_k + loss_ca + loss_mg + loss_fe + loss_ph
+            + LAMBDA_EC * ec_penalty
+            + LAMBDA_TOX * (tox_n + tox_p + tox_k + tox_ca + tox_mg + tox_fe))
 
 def main():
+    global RISK_LAMBDA  # Declare at function start
     args = parse_args()
 
     # Override global constants with CLI args
@@ -446,10 +683,6 @@ def main():
     STAGE_D50 = args.stage_d50
     STAGE_K = args.stage_k
 
-# Optimize refill concentrations
-    print("Optimizing refill concentrations for Parts A and B...")
-    # Update global risk lambda from CLI
-    global RISK_LAMBDA
     RISK_LAMBDA = args.risk_lambda
 
     # Jointly optimize [ml_a_init, ml_b_init, ml_a_refill, ml_b_refill]
@@ -462,7 +695,7 @@ def main():
     optimal_mg_refill = MG_A * optimal_ml_a_refill + MG_B * optimal_ml_b_refill
     optimal_fe_refill = FE_A * optimal_ml_a_refill + FE_B * optimal_ml_b_refill
 
-    # Scale to 4L for initial
+# Scale to 4L for initial
     ml_a_init_4l = ml_a_init * RESERVOIR_VOLUME
     ml_b_init_4l = ml_b_init * RESERVOIR_VOLUME
 
@@ -505,14 +738,20 @@ def main():
 
     daily_w = results['daily_water_mean']
     daily_w_std = np.sqrt(results['daily_water_var'])
-    cum_water_mean = results['cum_water_mean']
+    cum_water_mean = np.cumsum(daily_w)
     cum_water_std = np.sqrt(results['cum_water_var'])
     n_uptake_total = results['n_uptake_total']
     cum_mass_mean = results['cum_mass_mean']
 
-    # Calculate cumulative water usage and plant mass (mean +/- std)
+# Calculate cumulative water usage and plant mass (mean +/- std)
     days = np.arange(SIM_DAYS + 1)
     print(f"\nCumulative refill water usage over {SIM_DAYS} days: {cum_water_mean[-1]:.1f} ± {cum_water_std[-1]:.1f} L for 2 plants")
+    if args.print_interval and args.print_interval > 0:
+        step = args.print_interval
+        print("\nDay | N PPM | P PPM | K PPM | Ca PPM | Mg PPM | Fe PPM | Daily W (L/2) | Cum W (L/2) | Biomass g/plant")
+        for d in range(0, SIM_DAYS + 1, step):
+            daily_w_d = daily_w[d-1] if d > 0 and d-1 < len(daily_w) else 0.0
+            print(f"{d:3d} | {n_mean[d]:6.1f} | {p_mean[d]:6.1f} | {k_mean[d]:6.1f} | {ca_mean[d]:6.1f} | {mg_mean[d]:6.1f} | {fe_mean[d]:6.2f} | {daily_w_d:7.3f} | {cum_water_mean[d-1] if d>0 else 0.0:7.3f} | {cum_mass_mean[d]:6.2f}")
     # Biomass uncertainty via delta method: var(mass) ≈ (N_TO_BIOMASS_STD * uptake)^2 + (N_TO_BIOMASS * uptake_std)^2
     # Approximate uptake_std from nutrient concentration variance proxy (N) using centralized results
     uptake_std = np.sqrt(np.maximum(0.0, results['var']['N'][-1]))
@@ -520,75 +759,87 @@ def main():
     print(f"Cumulative plant mass (dry weight) over {SIM_DAYS} days: {cum_mass_mean[-1]:.1f} ± {mass_std:.1f} g per plant")
 
     if not args.no_plot:
-        # Plot simulation with error bar shading (mean +/- 1 std)
-        target_n = np.array([target_n_ppm(d) for d in range(SIM_DAYS + 1)])
-        target_p = np.array([target_p_ppm(d) for d in range(SIM_DAYS + 1)])
-        target_k = np.array([target_k_ppm(d) for d in range(SIM_DAYS + 1)])
-        target_ca = np.array([target_ca_ppm(d) for d in range(SIM_DAYS + 1)])
-        target_mg = np.array([target_mg_ppm(d) for d in range(SIM_DAYS + 1)])
-        target_fe = np.array([target_fe_ppm(d) for d in range(SIM_DAYS + 1)])
+# Plot simulation with error bar shading (mean +/- 1 std)
+        target_n, target_p, target_k, target_ca, target_mg, target_fe = build_physio_targets(
+            SIM_DAYS, results['daily_water_mean'], results['cum_mass_mean']
+        )
 
-        # Plot target Gaussian bands using same TGT_REL/TGT_ABS as objective
+        # Plot target Gaussian bands using same TGT_REL/TGT_ABS as objective (95% CI)
         def tgt_std(arr_target, key):
             return np.maximum(TGT_REL[key] * arr_target, TGT_ABS[key])
-        n_band = tgt_std(target_n, 'N')
-        p_band = tgt_std(target_p, 'P')
-        k_band = tgt_std(target_k, 'K')
-        ca_band = tgt_std(target_ca, 'Ca')
-        mg_band = tgt_std(target_mg, 'Mg')
-        fe_band = tgt_std(target_fe, 'Fe')
+        n_band = CI_Z * tgt_std(target_n, 'N')
+        p_band = CI_Z * tgt_std(target_p, 'P')
+        k_band = CI_Z * tgt_std(target_k, 'K')
+        ca_band = CI_Z * tgt_std(target_ca, 'Ca')
+        mg_band = CI_Z * tgt_std(target_mg, 'Mg')
+        fe_band = CI_Z * tgt_std(target_fe, 'Fe')
+
+        # 95% CI for simulated concentrations
+        n_ci = CI_Z * n_std
+        p_ci = CI_Z * p_std
+        k_ci = CI_Z * k_std
+        ca_ci = CI_Z * ca_std
+        mg_ci = CI_Z * mg_std
+        fe_ci = CI_Z * fe_std
 
         fig, axs = plt.subplots(7, 1, figsize=(10, 24))
-        axs[0].fill_between(days, target_n - n_band, target_n + n_band, color='orange', alpha=0.15, label='Sensitivity band')
+        axs[0].fill_between(days, target_n - n_band, target_n + n_band, color='orange', alpha=0.15, label='Target 95% CI')
+        axs[0].fill_between(days, target_n, np.minimum(TOX_MAX['N'], target_n), color='none')
+        axs[0].axhline(TOX_MAX['N'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
         axs[0].plot(days, target_n, label='Target N PPM', linestyle='--', color='gray')
         axs[0].plot(days, n_mean, label='Mean Simulated N PPM')
-        axs[0].fill_between(days, n_mean - n_std, n_mean + n_std, alpha=0.3, label='±1 Std (analytic)')
+        axs[0].fill_between(days, n_mean - n_ci, n_mean + n_ci, alpha=0.3, label='95% CI (analytic)')
         axs[0].set_ylabel('N (ppm)')
         axs[0].legend()
         axs[0].grid(True, alpha=0.3)
 
-        axs[1].fill_between(days, target_p - p_band, target_p + p_band, color='orange', alpha=0.15, label='Sensitivity band')
+        axs[1].fill_between(days, target_p - p_band, target_p + p_band, color='orange', alpha=0.15, label='Target 95% CI')
+        axs[1].axhline(TOX_MAX['P'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
         axs[1].plot(days, target_p, label='Target P PPM', linestyle='--', color='gray')
         axs[1].plot(days, p_mean, label='Mean Simulated P PPM')
-        axs[1].fill_between(days, p_mean - p_std, p_mean + p_std, alpha=0.3, label='±1 Std (analytic)')
+        axs[1].fill_between(days, p_mean - p_ci, p_mean + p_ci, alpha=0.3, label='95% CI (analytic)')
         axs[1].set_ylabel('P (ppm)')
         axs[1].legend()
         axs[1].grid(True, alpha=0.3)
 
-        axs[2].fill_between(days, target_k - k_band, target_k + k_band, color='orange', alpha=0.15, label='Sensitivity band')
+        axs[2].fill_between(days, target_k - k_band, target_k + k_band, color='orange', alpha=0.15, label='Target 95% CI')
+        axs[2].axhline(TOX_MAX['K'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
         axs[2].plot(days, target_k, label='Target K PPM', linestyle='--', color='gray')
         axs[2].plot(days, k_mean, label='Mean Simulated K PPM')
-        axs[2].fill_between(days, k_mean - k_std, k_mean + k_std, alpha=0.3, label='±1 Std (analytic)')
+        axs[2].fill_between(days, k_mean - k_ci, k_mean + k_ci, alpha=0.3, label='95% CI (analytic)')
         axs[2].set_ylabel('K (ppm)')
         axs[2].legend()
         axs[2].grid(True, alpha=0.3)
 
-        axs[3].fill_between(days, target_ca - ca_band, target_ca + ca_band, color='orange', alpha=0.15, label='Sensitivity band')
+        axs[3].fill_between(days, target_ca - ca_band, target_ca + ca_band, color='orange', alpha=0.15, label='Target 95% CI')
+        axs[3].axhline(TOX_MAX['Ca'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
         axs[3].plot(days, target_ca, label='Target Ca PPM', linestyle='--', color='gray')
         axs[3].plot(days, ca_mean, label='Mean Simulated Ca PPM')
-        axs[3].fill_between(days, ca_mean - ca_std, ca_mean + ca_std, alpha=0.3, label='±1 Std (analytic)')
+        axs[3].fill_between(days, ca_mean - ca_ci, ca_mean + ca_ci, alpha=0.3, label='95% CI (analytic)')
         axs[3].set_ylabel('Ca (ppm)')
         axs[3].legend()
         axs[3].grid(True, alpha=0.3)
 
-        axs[4].fill_between(days, target_mg - mg_band, target_mg + mg_band, color='orange', alpha=0.15, label='Sensitivity band')
+        axs[4].fill_between(days, target_mg - mg_band, target_mg + mg_band, color='orange', alpha=0.15, label='Target 95% CI')
+        axs[4].axhline(TOX_MAX['Mg'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
         axs[4].plot(days, target_mg, label='Target Mg PPM', linestyle='--', color='gray')
         axs[4].plot(days, mg_mean, label='Mean Simulated Mg PPM')
-        axs[4].fill_between(days, mg_mean - mg_std, mg_mean + mg_std, alpha=0.3, label='±1 Std (analytic)')
+        axs[4].fill_between(days, mg_mean - mg_ci, mg_mean + mg_ci, alpha=0.3, label='95% CI (analytic)')
         axs[4].set_ylabel('Mg (ppm)')
         axs[4].legend()
         axs[4].grid(True, alpha=0.3)
 
-        axs[5].fill_between(days, target_fe - fe_band, target_fe + fe_band, color='orange', alpha=0.15, label='Sensitivity band')
+        axs[5].fill_between(days, target_fe - fe_band, target_fe + fe_band, color='orange', alpha=0.15, label='Target 95% CI')
+        axs[5].axhline(TOX_MAX['Fe'], color='red', linestyle=':', alpha=0.6, label='Toxicity max')
         axs[5].plot(days, target_fe, label='Target Fe PPM', linestyle='--', color='gray')
         axs[5].plot(days, fe_mean, label='Mean Simulated Fe PPM')
-        axs[5].fill_between(days, fe_mean - fe_std, fe_mean + fe_std, alpha=0.3, label='±1 Std (analytic)')
+        axs[5].fill_between(days, fe_mean - fe_ci, fe_mean + fe_ci, alpha=0.3, label='95% CI (analytic)')
         axs[5].set_ylabel('Fe (ppm)')
         axs[5].legend()
         axs[5].grid(True, alpha=0.3)
 
         axs[6].plot(days[1:], cum_water_mean, label='Mean Cumulative Water Use (L for 2 plants)', color='purple')
-        axs[6].fill_between(days[1:], cum_water_mean - cum_water_std, cum_water_mean + cum_water_std, alpha=0.3, color='purple')
+        axs[6].fill_between(days[1:], cum_water_mean - CI_Z * cum_water_std, cum_water_mean + CI_Z * cum_water_std, alpha=0.3, color='purple')
         axs[6].plot(days, cum_mass_mean, label='Mean Cumulative Plant Mass (g dry weight, per plant)', color='green')
         axs[6].set_xlabel('Days')
         axs[6].set_ylabel('Cumulative Water (L) / Mass (g)')
@@ -598,7 +849,7 @@ def main():
         # Add daily water use on a separate axis
         ax6_twin = axs[6].twinx()
         ax6_twin.plot(days[:SIM_DAYS], daily_w, label='Daily Water Use (L for 2 plants)', color='blue', linestyle='--', alpha=0.8)
-        ax6_twin.fill_between(days[:SIM_DAYS], daily_w - daily_w_std, daily_w + daily_w_std, alpha=0.3, color='blue')
+        ax6_twin.fill_between(days[:SIM_DAYS], daily_w - CI_Z * daily_w_std, daily_w + CI_Z * daily_w_std, alpha=0.3, color='blue')
         ax6_twin.set_ylabel('Daily Water Use (L)', color='blue')
         ax6_twin.tick_params(axis='y', labelcolor='blue')
 
@@ -606,6 +857,19 @@ def main():
         lines1, labels1 = axs[6].get_legend_handles_labels()
         lines2, labels2 = ax6_twin.get_legend_handles_labels()
         axs[6].legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+
+        # Warn if any nutrient's 95% CIs do not overlap target 95% CIs (proxy for plant death risk)
+        def ci_overlap(sim, sim_ci, tgt, tgt_ci):
+            return np.any((sim - sim_ci) <= (tgt + tgt_ci)) and np.any((sim + sim_ci) >= (tgt - tgt_ci))
+        warnings = []
+        if not ci_overlap(n_mean, n_ci, target_n, n_band): warnings.append('N')
+        if not ci_overlap(p_mean, p_ci, target_p, p_band): warnings.append('P')
+        if not ci_overlap(k_mean, k_ci, target_k, k_band): warnings.append('K')
+        if not ci_overlap(ca_mean, ca_ci, target_ca, ca_band): warnings.append('Ca')
+        if not ci_overlap(mg_mean, mg_ci, target_mg, mg_band): warnings.append('Mg')
+        if not ci_overlap(fe_mean, fe_ci, target_fe, fe_band): warnings.append('Fe')
+        if warnings:
+            print(f"Warning: 95% CI non-overlap vs target for: {', '.join(warnings)}. Risk of plant failure.")
 
         plt.tight_layout()
         if args.output:
@@ -636,6 +900,8 @@ def parse_args():
                        help=f'Day at 50% growth stage (default: {STAGE_D50})')
     parser.add_argument('--stage-k', type=float, default=STAGE_K,
                        help=f'Logistic stage slope (default: {STAGE_K})')
+    parser.add_argument('--print-interval', type=int, default=0,
+                       help='Print debug metrics every N days (0 to disable)')
     return parser.parse_args()
 
 if __name__ == '__main__':

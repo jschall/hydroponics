@@ -1,0 +1,55 @@
+---
+alwaysApply: true
+---
+# Program Run Instructions
+
+This project simulates and optimizes nutrient dosing for a 90‑day unattended Thai pepper grow. The main entry point is [hydroponic.py](mdc:hydroponic.py).
+
+## How to run
+
+- Basic run (default 90 days):
+```bash
+python hydroponic.py
+```
+
+- Specify duration (e.g., 120 days) and save plot:
+```bash
+python hydroponic.py --days 120 --output results.png
+```
+
+- Run without plotting (console only):
+```bash
+python hydroponic.py --days 90 --no-plot
+```
+
+- Debug printing every N days (quantities that are plotted):
+```bash
+python hydroponic.py --days 90 --print-interval 5
+```
+
+## Key CLI flags
+
+- `--days INT`                Simulation horizon in days
+- `--no-plot`                 Skip plotting (prints results only)
+- `--output PATH`             Save plot to file
+- `--print-interval INT`      Print debug metrics every N days (0 to disable)
+- `--light-dli FLOAT`         Daily light integral (mol/m²/day)
+- `--air-temp-f FLOAT`        Air temperature (°F)
+- `--humidity FLOAT`          Relative humidity (0–1)
+- `--k-light FLOAT`           Light half‑saturation constant for uptake/ET
+- `--stage-d50 FLOAT`         Day at 50% growth stage (logistic stage)
+- `--stage-k FLOAT`           Logistic stage slope
+- `--risk-lambda FLOAT`       Variance penalty in probabilistic objective
+
+Notes:
+- The script jointly optimizes initial and refill dosing for Parts A and B and reports ppm for each nutrient.
+- Climate is treated as constant across time with parameter uncertainty propagated analytically.
+- Water use uses a Penman–Monteith–lite ET model with separate evaporation and transpiration, scaled by stage/LAI.
+
+## Typical unattended run
+
+1) Optimize: `python hydroponic.py --days 90 --output setup.png`
+2) Dose initial reservoir and prepare a refill mix per output.
+3) Set the light timer; plant seeds.
+4) Leave system for 90 days.
+
