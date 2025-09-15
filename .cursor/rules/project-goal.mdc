@@ -1,0 +1,20 @@
+---
+alwaysApply: true
+---
+# Project Goal: Autonomous 90‑Day Thai Pepper Grow
+
+The purpose of this project is to maximize the chance of successfully growing two Thai pepper plants 100% unattended for 90 days. The intended operating procedure is:
+
+- Run the script once to compute initial and refill dosing.
+- Fill and dose the reservoirs per script output.
+- Set the light timer.
+- Plant the seeds.
+- Leave the system unattended for 3 months, expecting harvestable peppers on return.
+
+Implications for design and modeling:
+
+- Favor robustness and stability over aggressive yield optimization.
+- Model and account for uncertainty (environment and parameters) conservatively.
+- Avoid early‑stage nutrient depletion; respect germination and slow initial growth.
+- Keep refill composition constant and practical to prepare.
+- Provide clear, actionable outputs suitable for a single setup session.
